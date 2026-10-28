@@ -1,0 +1,3310 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useParams, useNavigate, NavLink } from 'react-router-dom';
+import {
+  Folder,
+  Layers,
+  Upload,
+  CheckCircle2,
+  Info,
+  ArrowRight,
+  Shield,
+  FileCode,
+  Check,
+  AlertTriangle,
+  Github,
+  Play,
+  Ban,
+  RotateCcw,
+  Clock,
+  Calendar,
+  History,
+  Radio,
+  PlusCircle,
+  Terminal,
+  Trash2,
+  ExternalLink,
+  Download,
+  Filter,
+  Search,
+  X,
+  FileSpreadsheet,
+  Package,
+  FolderGit2,
+  Copy,
+  MoreVertical,
+  Plus,
+  ArrowLeft,
+  User,
+  ChevronDown,
+  FileText,
+  FolderOpen,
+} from 'lucide-react';
+import { useAppState } from '../../context/AppStateContext';
+import type { ScanJob } from '../../types';
+import { ProjectApplicationSelect } from '../../components/common/ProjectApplicationSelect';
+import type { CatalogRecord } from '../../api/client';
+import {
+  filesFromDataTransfer,
+  fileTypesIn,
+  folderLabel,
+  folderStatsIn,
+  folderTypeLabel,
+  formatBytes,
+  isArchiveName,
+  isInsideSkippedDir,
+  isManifestRelativePath,
+  selectFolderManifests,
+  SUPPORTED_MANIFEST_HINT,
+  type FolderFile,
+} from './localFolder';
+import { classifyBulkCsv } from './bulkRows';
+import * as XLSX from 'xlsx';
+import { PipelineGrid, ScanResultDetails } from './ScanResultDetails';
+import { displayStatus, formatDuration, formatEventTime, isOpenStatus, stageLabel } from './scanProgress';
+import { ScanActionMenu } from './ScanActionMenu';
+import { TablePagination } from '../../components/common/TablePagination';
+
+export const SecurityScans: React.FC = () => {
+  const { tab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const { startScan, rescanScan, cancelScan, activeScan, scansHistory, exportSBOM, addToast } = useAppState();
+
+  // Active sub-page tab: 'table' | 'new' | 'live' | 'history' | 'schedules'
+  const validTabs = ['table', 'new', 'live', 'history', 'schedules'] as const;
+  type TabType = (typeof validTabs)[number];
+  const activeTab: TabType = validTabs.includes(tab as TabType) ? (tab as TabType) : 'table';
+
+  const setTab = (newTab: TabType) => {
+    if (newTab === 'table') {
+      navigate('/security-scans');
+    } else {
+      navigate(`/security-scans/${newTab}`);
+    }
+  };
+
+  // =========================================================================
+  // SUB-PAGE 0: SECURITY SCANS TABLE (Landing view for Security Scans)
+  // =========================================================================
+  const [scanSearch, setScanSearch] = useState('');
+  const [scanStatusFilter, setScanStatusFilter] = useState('All');
+  const [scanTypeFilter, setScanTypeFilter] = useState('All');
+  const [showScanFilters, setShowScanFilters] = useState(false);
+
+  const filteredScans = scansHistory.filter((s) => {
+    const q = scanSearch.toLowerCase();
+    const matchSearch =
+      !q ||
+      s.targetProject.toLowerCase().includes(q) ||
+      (s.appService && s.appService.toLowerCase().includes(q)) ||
+      s.scanType.toLowerCase().includes(q) ||
+      ((s as any).requestedBy && (s as any).requestedBy.toLowerCase().includes(q)) ||
+      s.status.toLowerCase().includes(q);
+    const matchStatus = scanStatusFilter === 'All'
+      || s.status === scanStatusFilter
+      || (scanStatusFilter === 'running' && s.status === 'analyzing');
+    const matchType = scanTypeFilter === 'All' || s.scanType === scanTypeFilter;
+    return matchSearch && matchStatus && matchType;
+  });
+
+  // Security Scans Table Pagination State
+  const [scanPage, setScanPage] = useState<number>(1);
+  const [scanPageSize, setScanPageSize] = useState<number>(15);
+
+  useEffect(() => {
+    setScanPage(1);
+  }, [scanSearch, scanStatusFilter, scanTypeFilter]);
+
+  const totalScans = filteredScans.length;
+  const totalScanPages = Math.max(1, Math.ceil(totalScans / scanPageSize));
+  const safeScanPage = Math.min(Math.max(1, scanPage), totalScanPages);
+  const scanStartIndex = (safeScanPage - 1) * scanPageSize;
+  const scanEndIndex = Math.min(scanStartIndex + scanPageSize, totalScans);
+  const paginatedScans = filteredScans.slice(scanStartIndex, scanEndIndex);
+
+  const handleResetScanFilters = () => {
+    setScanSearch('');
+    setScanStatusFilter('All');
+    setScanTypeFilter('All');
+    setScanPage(1);
+  };
+
+  // =========================================================================
+  // SUB-PAGE 1: NEW SCAN (2-Stage Input & Review Flow as per Excel Sr 5)
+  // =========================================================================
+  const [newScanStep, setNewScanStep] = useState<'input' | 'review'>('input');
+  const [launchFormKey, setLaunchFormKey] = useState(0);
+
+  // Form State: Project Information
+  const [selectedProject, setSelectedProject] = useState<CatalogRecord | null>(null);
+  const [selectedApplication, setSelectedApplication] = useState<CatalogRecord | null>(null);
+  const projectName = selectedProject?.name || '';
+  const appService = selectedApplication?.name || '';
+  const [releaseVersion, setReleaseVersion] = useState('');
+  const [description, setDescription] = useState('');
+
+  // Source Type: 'local' | 'git' | 'bulk'
+  const [sourceType, setSourceType] = useState<'local' | 'git' | 'bulk'>('local');
+
+  // Local Source State
+  const [selectedFolder, setSelectedFolder] = useState<string>('');
+  const [localFile, setLocalFile] = useState<File | null>(null);
+  const [localFolder, setLocalFolder] = useState<FolderFile[]>([]);
+  const [showFileTree, setShowFileTree] = useState(false);
+  const [fileFilter, setFileFilter] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const localFolderStats = useMemo(() => {
+    return folderStatsIn(localFolder);
+  }, [localFolder]);
+
+  const filteredLocalFiles = useMemo(() => {
+    if (!fileFilter.trim()) return localFolder;
+    const q = fileFilter.toLowerCase();
+    return localFolder.filter((item) => item.relativePath.toLowerCase().includes(q));
+  }, [localFolder, fileFilter]);
+
+  const [isDraggingOverCard, setIsDraggingOverCard] = useState(false);
+
+  // Local Source Upload Tabbed Modal State (matches user reference design)
+  const [localUploadModalOpen, setLocalUploadModalOpen] = useState(false);
+  const [localModalTab, setLocalModalTab] = useState<'files' | 'folder'>('files');
+  const [pendingLocalFile, setPendingLocalFile] = useState<File | null>(null);
+  const [pendingLocalFolder, setPendingLocalFolder] = useState<FolderFile[]>([]);
+  const modalFileInputRef = useRef<HTMLInputElement>(null);
+  const modalFolderInputRef = useRef<HTMLInputElement>(null);
+
+  const openLocalUploadModal = (initialTab: 'files' | 'folder' = 'files') => {
+    setLocalModalTab(localFolder.length > 0 ? 'folder' : initialTab);
+    setPendingLocalFile(localFile);
+    setPendingLocalFolder(localFolder);
+    setLocalUploadModalOpen(true);
+  };
+
+  const clearLocalSelection = () => {
+    setSelectedFolder('');
+    setLocalFile(null);
+    setLocalFolder([]);
+    setPendingLocalFile(null);
+    setPendingLocalFolder([]);
+    setShowFileTree(false);
+    setFileFilter('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (folderInputRef.current) folderInputRef.current.value = '';
+    if (modalFileInputRef.current) modalFileInputRef.current.value = '';
+    if (modalFolderInputRef.current) modalFolderInputRef.current.value = '';
+  };
+
+  const openFolderPicker = () => {
+    const input = folderInputRef.current;
+    if (!input) return;
+    input.value = '';
+    input.multiple = true;
+    input.accept = '';
+    input.removeAttribute('accept');
+    // Whole project / mixed-manifest folder upload.
+    input.setAttribute('webkitdirectory', '');
+    input.setAttribute('directory', '');
+    input.click();
+  };
+
+  const openFilePicker = () => {
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.value = '';
+    input.multiple = true;
+    input.removeAttribute('webkitdirectory');
+    input.removeAttribute('directory');
+    input.click();
+  };
+
+  const useFolderManifests = (items: FolderFile[]) => {
+    const nonSkipped = items.filter((item) => {
+      const rel = item.relativePath.replace(/\\/g, '/');
+      return rel !== '' && !isInsideSkippedDir(rel);
+    });
+    const finalItems = nonSkipped.length > 0 ? nonSkipped : items;
+    const manifests = selectFolderManifests(finalItems);
+    setSelectedFolder(folderTypeLabel(finalItems, manifests));
+    if (finalItems.length === 0 || finalItems.every((item) => item.file.size === 0)) {
+      setLocalFile(null);
+      setLocalFolder([]);
+      setSelectedFolder('');
+      addToast({
+        type: 'error',
+        title: 'Empty Folder',
+        message: 'The selected folder contains no files or only empty files (0 bytes). Empty folders cannot be scanned.',
+      });
+      return;
+    }
+    setLocalFile(null);
+    // Allow importing all files and folders within the selected folder
+    setLocalFolder(finalItems);
+
+    if (manifests.length > 0) {
+      const firstLower = manifests[0].file.name.toLowerCase();
+      if (firstLower.includes('cyclonedx') || firstLower === 'bom.json' || firstLower === 'bom.xml') {
+        setSbomFormat('CYCLONE DX');
+      } else if (firstLower.includes('spdx')) {
+        setSbomFormat('SPDX');
+      }
+    }
+  };
+
+  const acceptLocalDrop = async (dt: DataTransfer) => {
+    const items = await filesFromDataTransfer(dt);
+    if (!items || items.length === 0) {
+      addToast({
+        type: 'error',
+        title: 'Empty Drop',
+        message: 'No files were dropped or the dropped item was empty. Empty items cannot be scanned.',
+      });
+      return;
+    }
+    const nested = items.some((item) => item.relativePath.includes('/'));
+    if (!nested && items.length === 1) {
+      const droppedFile = items[0].file;
+      if (droppedFile.size === 0) {
+        setLocalFile(null);
+        setLocalFolder([]);
+        setSelectedFolder('');
+        addToast({
+          type: 'error',
+          title: 'Empty File',
+          message: `The file "${droppedFile.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+        });
+        return;
+      }
+      setLocalFolder([]);
+      setLocalFile(droppedFile);
+      setSelectedFolder(droppedFile.name);
+      const name = droppedFile.name.toLowerCase();
+      if (name.includes('cyclonedx') || name === 'bom.json' || name === 'bom.xml') {
+        setSbomFormat('CYCLONE DX');
+      } else if (name.includes('spdx')) {
+        setSbomFormat('SPDX');
+      }
+      return;
+    }
+    useFolderManifests(items);
+  };
+
+  // Remote Git State (GitHub only)
+  const [gitUrl, setGitUrl] = useState('');
+  const [gitBranch, setGitBranch] = useState('main');
+  const [gitToken, setGitToken] = useState('');
+
+  // Bulk Scan State & Spreadsheet Matrix Support
+  const bulkFileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadedBulk, setUploadedBulk] = useState<File | null>(null);
+  const [bulkMode, setBulkMode] = useState<'file' | 'manual'>('file');
+  const [bulkScanList, setBulkScanList] = useState(
+    'https://github.com/expressjs/express\nhttps://github.com/pallets/flask\nhttps://github.com/fastapi/fastapi\nhttps://github.com/gin-gonic/gin'
+  );
+
+  interface BulkProjectRow {
+    id: string;
+    rowNumber?: number;
+    project: string;
+    name: string;
+    version: string;
+    source: string;
+    branch: string;
+    ecosystem: string;
+    rowStatus?: 'ready' | 'duplicate' | 'invalid';
+    rowMessage?: string;
+  }
+
+  const [bulkFile, setBulkFile] = useState<{
+    name: string;
+    size: string;
+    rowCount: number;
+    uploadedAt: string;
+  }>({
+    name: 'squad1_bulk_scan_template.csv',
+    size: '0.8 KB',
+    rowCount: 0,
+    uploadedAt: 'Sample Template',
+  });
+
+  const [bulkFileError, setBulkFileError] = useState('');
+  const [bulkProjects, setBulkProjects] = useState<BulkProjectRow[]>([]);
+
+  const handleDownloadSampleCsv = () => {
+    const link = document.createElement('a');
+    link.href = '/squad1_bulk_scan_template.csv';
+    link.download = 'squad1_bulk_scan_template.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    addToast({
+      type: 'success',
+      title: 'Template Downloaded',
+      message: 'Downloaded squad1_bulk_scan_template.csv for batch inventory scanning.',
+    });
+  };
+
+  const handleBulkFile = async (file: File) => {
+    if (!file) return;
+
+    if (file.size === 0) {
+      setUploadedBulk(null);
+      setBulkFileError(`The file "${file.name}" is empty (0 bytes).`);
+      setBulkProjects([]);
+      setBulkFile({
+        name: file.name,
+        size: '0.0 KB',
+        rowCount: 0,
+        uploadedAt: 'Empty file',
+      });
+      addToast({
+        type: 'error',
+        title: 'Empty File',
+        message: `The spreadsheet file "${file.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+      });
+      if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+      return;
+    }
+
+    setUploadedBulk(file);
+    const fileSizeKB = (file.size / 1024).toFixed(1) + ' KB';
+    const fileName = file.name;
+    const isCsv = fileName.toLowerCase().endsWith('.csv');
+
+    const processClassifiedText = (csvText: string, isExcel = false) => {
+      if (!csvText.trim()) {
+        setUploadedBulk(null);
+        setBulkFileError('The spreadsheet file contains no data.');
+        setBulkProjects([]);
+        setBulkFile({
+          name: fileName,
+          size: fileSizeKB,
+          rowCount: 0,
+          uploadedAt: 'Empty file',
+        });
+        addToast({
+          type: 'error',
+          title: 'Empty File',
+          message: `The file "${fileName}" contains no data rows. Empty spreadsheets cannot be scanned.`,
+        });
+        if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+        return;
+      }
+      const classified = classifyBulkCsv(csvText);
+      if (classified.fileError) {
+        setUploadedBulk(null);
+        setBulkFileError(classified.fileError);
+        setBulkProjects([]);
+        setBulkFile({
+          name: fileName,
+          size: fileSizeKB,
+          rowCount: 0,
+          uploadedAt: 'Cannot scan',
+        });
+        addToast({ type: 'error', title: 'Spreadsheet cannot be scanned', message: classified.fileError });
+        if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+        return;
+      }
+      if (classified.rows.length === 0) {
+        setUploadedBulk(null);
+        setBulkFileError('The spreadsheet contains no project rows to scan.');
+        setBulkProjects([]);
+        setBulkFile({
+          name: fileName,
+          size: fileSizeKB,
+          rowCount: 0,
+          uploadedAt: 'Empty spreadsheet',
+        });
+        addToast({
+          type: 'error',
+          title: 'Empty Spreadsheet',
+          message: `The file "${fileName}" contains no data rows. Empty spreadsheets cannot be scanned.`,
+        });
+        if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+        return;
+      }
+      const skipped = classified.rows.filter((row) => row.rowStatus !== 'ready').length;
+      setBulkFileError('');
+      setBulkProjects(classified.rows);
+      setBulkFile({
+        name: fileName,
+        size: fileSizeKB,
+        rowCount: classified.rows.length,
+        uploadedAt: 'Just now',
+      });
+      setBulkScanList(classified.rows.map((row) => row.source).join('\n'));
+      addToast({
+        type: skipped ? 'warning' : 'success',
+        title: skipped
+          ? 'Spreadsheet needs review'
+          : isExcel
+            ? 'Excel Matrix Imported'
+            : 'CSV Matrix Imported',
+        message: skipped
+          ? `${classified.rows.length - skipped} rows will be scanned. ${skipped} duplicate or invalid ${skipped === 1 ? 'row is' : 'rows are'} skipped.`
+          : `Successfully loaded ${classified.rows.length} projects from ${fileName}.`,
+      });
+    };
+
+    if (isCsv) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = (event.target?.result as string) || '';
+        processClassifiedText(text, false);
+      };
+      reader.readAsText(file);
+    } else {
+      try {
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = sheetName ? workbook.Sheets[sheetName] : null;
+        if (!sheet) {
+          throw new Error('Workbook contains no sheets.');
+        }
+        const csvText = XLSX.utils.sheet_to_csv(sheet);
+        processClassifiedText(csvText, true);
+      } catch (err: any) {
+        setUploadedBulk(null);
+        setBulkFileError('Could not read Excel file.');
+        setBulkProjects([]);
+        addToast({
+          type: 'error',
+          title: 'Invalid File',
+          message: `Failed to parse Excel file "${fileName}". Please check the file.`,
+        });
+        if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleBulkFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) void handleBulkFile(file);
+  };
+
+  // Scan Configuration State
+  const [sbomFormat, setSbomFormat] = useState<'SPDX' | 'CYCLONE DX'>('SPDX');
+
+  const resetLaunchForm = () => {
+    setNewScanStep('input');
+    setSelectedProject(null);
+    setSelectedApplication(null);
+    setReleaseVersion('');
+    setDescription('');
+    setSourceType('local');
+    setSelectedFolder('');
+    setLocalFile(null);
+    setLocalFolder([]);
+    setShowFileTree(false);
+    setFileFilter('');
+    setGitUrl('');
+    setGitBranch('main');
+    setGitToken('');
+    setUploadedBulk(null);
+    setBulkMode('file');
+    setBulkFileError('');
+    setBulkProjects([]);
+    setBulkFile({
+      name: 'squad1_bulk_scan_template.csv',
+      size: '0.8 KB',
+      rowCount: 0,
+      uploadedAt: 'Sample Template',
+    });
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (folderInputRef.current) folderInputRef.current.value = '';
+    if (bulkFileInputRef.current) bulkFileInputRef.current.value = '';
+  };
+
+  const goToLaunchScan = () => {
+    resetLaunchForm();
+    setLaunchFormKey((key) => key + 1);
+    setTab('new');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Computes the correct file format for the selected scan source
+  const getPrimaryFormatLabel = (): string => {
+    if (sourceType === 'bulk') {
+      if (bulkMode === 'file') {
+        const name = (uploadedBulk?.name || bulkFile?.name || '').toLowerCase();
+        if (name.endsWith('.xlsx')) return 'Excel (.xlsx)';
+        if (name.endsWith('.xls')) return 'Excel (.xls)';
+        if (name.endsWith('.csv')) return 'CSV (.csv)';
+        return 'Spreadsheet (.csv, .xlsx, .xls)';
+      }
+      return 'Plain Text (Git URLs)';
+    }
+
+    if (sourceType === 'git') {
+      return 'Remote Git Repository';
+    }
+
+    if (localFile) {
+      const name = localFile.name.toLowerCase();
+      if (name.endsWith('.json')) {
+        if (name.includes('cyclonedx') || name === 'bom.json') return 'CycloneDX JSON (.json)';
+        if (name.includes('spdx')) return 'SPDX JSON (.json)';
+        return 'JSON (.json)';
+      }
+      if (name.endsWith('.xml')) {
+        if (name.includes('cyclonedx') || name === 'bom.xml') return 'CycloneDX XML (.xml)';
+        if (name.includes('spdx')) return 'SPDX XML (.xml)';
+        return 'XML (.xml)';
+      }
+      if (name.endsWith('.zip')) return 'ZIP Archive (.zip)';
+      if (name.endsWith('.tar.gz') || name.endsWith('.tgz')) return 'Tar Archive (.tgz)';
+      if (name.endsWith('.txt')) return 'Text Manifest (.txt)';
+      if (name.endsWith('.lock')) return 'Lockfile (.lock)';
+      if (name.endsWith('.yaml') || name.endsWith('.yml')) return 'YAML (.yaml)';
+      if (name.endsWith('.toml')) return 'TOML (.toml)';
+      if (name.endsWith('.gradle') || name.endsWith('.kts')) return 'Gradle Script (.gradle)';
+      if (name.endsWith('.mod') || name.endsWith('.sum')) return 'Go Module (.mod)';
+      if (name.endsWith('.csproj') || name.endsWith('.vbproj') || name.endsWith('.fsproj')) return '.NET Project';
+
+      const parts = name.split('.');
+      if (parts.length > 1) {
+        const ext = parts.pop();
+        return `${ext?.toUpperCase()} (.${ext})`;
+      }
+      return 'Source File';
+    }
+
+    if (localFolder && localFolder.length > 0) {
+      const types = fileTypesIn(localFolder);
+      if (types.length > 0) {
+        return `Project Directory (${types.map((t: string) => t.toUpperCase()).slice(0, 3).join(', ')})`;
+      }
+      return 'Project Directory (Multi-Manifest)';
+    }
+
+    if (selectedFolder) {
+      const lower = selectedFolder.toLowerCase();
+      if (lower.endsWith('.zip')) return 'ZIP Archive (.zip)';
+      if (lower.endsWith('.json')) return 'JSON (.json)';
+      if (lower.endsWith('.xml')) return 'XML (.xml)';
+      if (lower.endsWith('.csv')) return 'CSV (.csv)';
+      if (lower.endsWith('.txt')) return 'Text Manifest (.txt)';
+      return 'Local Source Directory';
+    }
+
+    return 'CycloneDX (JSON)';
+  };
+
+  // Tooltip State (Excel Sr 9: hover info icons)
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+
+  // Submission State
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Advance to Review
+  const handleProceedToReview = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (sourceType !== 'bulk') {
+      if (!selectedProject?.id) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Project Name is required.' });
+        return;
+      }
+      if (!selectedApplication?.id) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Application / Service is required.' });
+        return;
+      }
+    }
+    if (sourceType === 'local') {
+      if (!localFile && localFolder.length === 0) {
+        addToast({ type: 'warning', title: 'Source Required', message: 'Choose a project folder, a single manifest file, or a .zip archive.' });
+        return;
+      }
+      if (localFile && localFile.size === 0) {
+        addToast({ type: 'error', title: 'Empty File', message: `The file "${localFile.name}" is empty (0 bytes). Empty files cannot be scanned.` });
+        return;
+      }
+      if (localFolder.length > 0 && localFolder.every((f) => f.file.size === 0)) {
+        addToast({ type: 'error', title: 'Empty Folder', message: 'The selected folder contains only empty files (0 bytes). Empty folders cannot be scanned.' });
+        return;
+      }
+    }
+    if (sourceType === 'bulk' && bulkMode === 'file') {
+      if (!uploadedBulk) {
+        addToast({ type: 'warning', title: 'Spreadsheet Required', message: 'Upload a CSV, XLSX, or XLS spreadsheet before proceeding.' });
+        return;
+      }
+      if (uploadedBulk.size === 0) {
+        addToast({ type: 'error', title: 'Empty File', message: `The spreadsheet file "${uploadedBulk.name}" is empty (0 bytes). Empty files cannot be scanned.` });
+        return;
+      }
+      if (bulkFileError) {
+        addToast({ type: 'error', title: 'Spreadsheet cannot be scanned', message: bulkFileError });
+        return;
+      }
+      if (bulkProjects.length === 0) {
+        addToast({ type: 'error', title: 'Empty Spreadsheet', message: 'The spreadsheet contains no project rows to scan.' });
+        return;
+      }
+      if (bulkProjects.length > 0 && bulkProjects.every((row) => row.rowStatus && row.rowStatus !== 'ready')) {
+        addToast({
+          type: 'warning',
+          title: 'Nothing to scan',
+          message: 'Every row is a duplicate project or invalid. Fix the spreadsheet and upload it again. Valid rows in a mixed file are still scanned.',
+        });
+        return;
+      }
+    }
+    setNewScanStep('review');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Final Launch Scan (Excel Sr 8) -> Transitions to Live Jobs
+  const handleFinalLaunchScan = async () => {
+    const manualUrls = bulkScanList.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith('https://github.com/'));
+    if (sourceType === 'local') {
+      if (!localFile && localFolder.length === 0) {
+        addToast({ type: 'warning', title: 'Source Required', message: 'Choose a project folder, a single manifest file, or a .zip archive.' });
+        return;
+      }
+      if (localFile && localFile.size === 0) {
+        addToast({ type: 'error', title: 'Empty File', message: `The file "${localFile.name}" is empty (0 bytes). Empty files cannot be scanned.` });
+        return;
+      }
+      if (localFolder.length > 0 && localFolder.every((f) => f.file.size === 0)) {
+        addToast({ type: 'error', title: 'Empty Folder', message: 'The selected folder contains only empty files (0 bytes). Empty folders cannot be scanned.' });
+        return;
+      }
+    }
+    if (sourceType === 'git' && !gitUrl.trim().startsWith('https://github.com/')) {
+      addToast({ type: 'warning', title: 'GitHub URL required', message: 'Use a URL that starts with https://github.com/.' });
+      return;
+    }
+    if (sourceType === 'bulk' && bulkMode === 'file') {
+      if (!uploadedBulk) {
+        addToast({ type: 'warning', title: 'Spreadsheet required', message: 'Upload a CSV, XLSX, or XLS that uses the template columns.' });
+        return;
+      }
+      if (uploadedBulk.size === 0) {
+        addToast({ type: 'error', title: 'Empty File', message: `The spreadsheet file "${uploadedBulk.name}" is empty (0 bytes). Empty files cannot be scanned.` });
+        return;
+      }
+      if (bulkFileError) {
+        addToast({ type: 'error', title: 'Spreadsheet cannot be scanned', message: bulkFileError });
+        return;
+      }
+      if (bulkProjects.length === 0) {
+        addToast({ type: 'error', title: 'Empty Spreadsheet', message: 'The spreadsheet contains no project rows to scan.' });
+        return;
+      }
+    }
+    if (sourceType === 'bulk' && bulkMode === 'manual' && manualUrls.length === 0) {
+      addToast({ type: 'warning', title: 'Repositories required', message: 'Enter one https://github.com/owner/repo URL per line.' });
+      return;
+    }
+
+    setIsSubmitting(true);
+    const sourceDesc =
+      sourceType === 'local'
+        ? localFile?.name || selectedFolder
+        : sourceType === 'git'
+          ? `${gitUrl} (${gitBranch})`
+          : bulkMode === 'file'
+            ? uploadedBulk?.name || bulkFile.name
+            : `${manualUrls.length} GitHub repositories`;
+
+    const bulkFileToSend = sourceType !== 'bulk'
+      ? null
+      : bulkMode === 'file'
+        ? uploadedBulk
+        : new File(
+          [
+            'project_name,application_name,version,repository_url,branch,authentication_reference,scan_type\n' +
+            manualUrls.map((url) => {
+              const parts = url.split('/').filter(Boolean);
+              const name = parts.pop() || 'app';
+              const owner = parts.pop() || name;
+              return [owner, name, 'UNKNOWN', url, 'main', '', 'GITHUB']
+                .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+                .join(',');
+            }).join('\n') + '\n',
+          ],
+          'bulk.csv',
+          { type: 'text/csv' },
+        );
+
+    try {
+      const firstBulk = bulkProjects.find((row) => !row.rowStatus || row.rowStatus === 'ready') || bulkProjects[0];
+      const scanId = await startScan({
+        projectName: sourceType === 'bulk' ? (projectName.trim() || firstBulk?.project || 'Bulk scan') : projectName,
+        appService: sourceType === 'bulk' ? (appService.trim() || firstBulk?.name || '') : appService,
+        projectId: sourceType === 'bulk' ? undefined : selectedProject?.id,
+        applicationId: sourceType === 'bulk' ? undefined : selectedApplication?.id,
+        releaseTag: sourceType === 'bulk' ? (releaseVersion.trim() || firstBulk?.version || '') : releaseVersion,
+        scanType: sourceType === 'local' ? 'Local Source' : sourceType === 'git' ? 'Remote Git' : 'Bulk Scan',
+        source: sourceDesc,
+        localFile,
+        localFolder,
+        bulkFile: bulkFileToSend,
+        gitUrl,
+        gitBranch,
+        gitToken,
+      });
+
+      setIsSubmitting(false);
+      if (scanId) {
+        resetLaunchForm();
+        setTab('live');
+      }
+    } catch (err) {
+      setIsSubmitting(false);
+      addToast({
+        type: 'error',
+        title: 'Scan was not queued',
+        message: err instanceof Error ? err.message : 'The scan API rejected the request.',
+      });
+    }
+  };
+
+  // =========================================================================
+  // SUB-PAGE 2: LIVE JOBS STATE & LOGIC
+  // =========================================================================
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!activeScan || !isOpenStatus(activeScan.status)) return;
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [activeScan?.id, activeScan?.status]);
+
+  const scanFailed = activeScan?.status === 'failed';
+  const bulkChildren = activeScan?.isBulkAggregate
+    ? scansHistory.filter((scan) => scan.bulkId === activeScan.bulkId && !scan.isBulkAggregate)
+    : [];
+  const pipelineScan = activeScan?.isBulkAggregate
+    ? bulkChildren.find((scan) => scan.status === 'running' || scan.status === 'analyzing') || null
+    : activeScan;
+
+  // =========================================================================
+  // SUB-PAGE 3: SCAN HISTORY STATE & DETAIL MODAL
+  // =========================================================================
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState('All');
+  const [selectedScanId, setSelectedScanId] = useState<string | null>(null);
+  const selectedHistoryScan = scansHistory.find((scan) => scan.id === selectedScanId) || null;
+  const [rescanningId, setRescanningId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  const canRescan = (status: string) => status === 'completed' || status === 'failed' || status === 'cancelled';
+  const canCancel = (status: string) => {
+    const normalized = status.toLowerCase();
+    return normalized === 'queued' || normalized === 'pending' || normalized === 'running' || normalized === 'analyzing';
+  };
+  const waitingScans = scansHistory.filter((scan) => scan.status === 'queued' && scan.id !== activeScan?.id);
+
+  const handleCancel = async (job: ScanJob) => {
+    if (cancellingId) return;
+    setCancellingId(job.id);
+    try {
+      if (job.isBulkAggregate) {
+        const children = scansHistory.filter((scan) => scan.bulkId === job.bulkId && !scan.isBulkAggregate && canCancel(scan.status));
+        if (children.length === 0) {
+          addToast({ type: 'info', title: 'Nothing to cancel', message: 'Every row in this batch has already finished.' });
+          return;
+        }
+        for (const child of children) {
+          await cancelScan(child);
+        }
+        return;
+      }
+      await cancelScan(job);
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Cancel failed',
+        message: err instanceof Error ? err.message : 'The scan could not be cancelled.',
+      });
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const handleRescan = async (job: ScanJob) => {
+    if (rescanningId) return;
+    setRescanningId(job.id);
+    try {
+      await rescanScan(job);
+      setSelectedScanId(null);
+      setTab('live');
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Rescan failed',
+        message: err instanceof Error ? err.message : 'The scan could not be queued again.',
+      });
+    } finally {
+      setRescanningId(null);
+    }
+  };
+
+  const filteredHistory = scansHistory.filter((s) => {
+    const matchSearch =
+      !historySearch ||
+      s.targetProject.toLowerCase().includes(historySearch.toLowerCase()) ||
+      s.id.toLowerCase().includes(historySearch.toLowerCase());
+    const matchStatus = historyStatusFilter === 'All'
+      || s.status === historyStatusFilter
+      || (historyStatusFilter === 'running' && s.status === 'analyzing');
+    return matchSearch && matchStatus;
+  });
+
+  interface ScanScheduleItem {
+    id: string;
+    name: string;
+    project: string;
+    frequency: string;
+    days: string;
+    nextRun: string;
+    lastRun: string;
+    enabled: boolean;
+  }
+
+  const SCHEDULES_STORAGE_KEY = 'squad1_sbom_schedules';
+
+  const [schedulesList, setSchedulesList] = useState<ScanScheduleItem[]>(() => {
+    try {
+      const saved = localStorage.getItem(SCHEDULES_STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to parse saved schedules', e);
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SCHEDULES_STORAGE_KEY, JSON.stringify(schedulesList));
+    } catch (e) {
+      console.error('Failed to persist schedules', e);
+    }
+  }, [schedulesList]);
+
+  const [createScheduleModalOpen, setCreateScheduleModalOpen] = useState(false);
+  const [newSchedName, setNewSchedName] = useState('');
+  const [newSchedProject, setNewSchedProject] = useState('Payments API');
+  const [newSchedFreq, setNewSchedFreq] = useState('Daily');
+  const [newSchedDate, setNewSchedDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [newSchedTime, setNewSchedTime] = useState<string>('02:00');
+  const [newSchedTimezone, setNewSchedTimezone] = useState<string>('UTC');
+
+  const handleCreateSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newSchedName.trim()) return;
+
+    const formattedNextRun = `${newSchedDate}, ${newSchedTime} ${newSchedTimezone}`;
+    const formattedFrequency = `${newSchedFreq} @ ${newSchedTime} ${newSchedTimezone}`;
+
+    const newSched = {
+      id: `sched-${Date.now()}`,
+      name: newSchedName,
+      project: newSchedProject,
+      frequency: formattedFrequency,
+      days: newSchedFreq === 'Daily' ? 'Daily' : newSchedFreq.startsWith('Weekly') ? 'Weekly' : newSchedFreq.startsWith('Monthly') ? 'Monthly' : 'One-time',
+      nextRun: formattedNextRun,
+      lastRun: 'Never',
+      enabled: true,
+    };
+
+    setSchedulesList((prev) => [newSched, ...prev]);
+    setCreateScheduleModalOpen(false);
+    setNewSchedName('');
+    addToast({
+      type: 'success',
+      title: 'Schedule Created',
+      message: `Automated scan schedule configured for ${formattedNextRun}.`,
+    });
+  };
+
+  const toggleSchedule = (id: string) => {
+    setSchedulesList((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s))
+    );
+  };
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto pb-16 animate-fadeIn">
+      {/* ========================================================================= */}
+      {/* 0. COMPONENTS TABLE SUB-PAGE (DEFAULT VIEW FOR SECURITY SCANS)            */}
+      {/* ========================================================================= */}
+      {activeTab === 'table' && (
+        <div className="space-y-6">
+          {/* Search & Action Bar */}
+          <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 shadow-2xs space-y-3">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              {/* Left: Search Input & Filter Toggle */}
+              <div className="flex items-center gap-2 flex-1 max-w-xl">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={scanSearch}
+                    onChange={(e) => setScanSearch(e.target.value)}
+                    placeholder="Search by project name, application, scan type, status, or requester..."
+                    className="w-full pl-9 pr-4 py-2 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 hover:border-blue-300 dark:hover:border-blue-700 transition-colors shadow-2xs"
+                  />
+                </div>
+
+                {/* Filter Toggle Button */}
+                <button
+                  type="button"
+                  onClick={() => setShowScanFilters((prev) => !prev)}
+                  className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0 ${showScanFilters || scanStatusFilter !== 'All' || scanTypeFilter !== 'All'
+                    ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
+                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600'
+                    }`}
+                  title="Toggle Filters"
+                >
+                  <Filter className="w-3.5 h-3.5" />
+                  <span>Filters</span>
+                  {(scanStatusFilter !== 'All' || scanTypeFilter !== 'All') && (
+                    <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                  )}
+                </button>
+              </div>
+
+              {/* Right: ONLY ONE BUTTON: Launch Scan (No components count pill!) */}
+              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                <button
+                  onClick={goToLaunchScan}
+                  className="px-3.5 py-2 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-lg flex items-center gap-1.5 shadow-sm shadow-blue-500/20 cursor-pointer transition-all whitespace-nowrap"
+                  title="Launch Security Scan"
+                >
+                  <Play className="w-3.5 h-3.5 shrink-0 fill-white" />
+                  <span>Launch Scan</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Dropdowns revealed upon clicking Filter icon */}
+            {showScanFilters && (
+              <div className="p-3 bg-gray-50/90 dark:bg-gray-800/60 border border-gray-200/80 dark:border-gray-700/80 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mr-1">
+                    Filter by:
+                  </span>
+
+                  <select
+                    value={scanStatusFilter}
+                    onChange={(e) => setScanStatusFilter(e.target.value)}
+                    className="text-xs px-2.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-2xs hover:border-blue-300 transition-colors"
+                  >
+                    <option value="All">All Statuses</option>
+                    <option value="completed">Completed</option>
+                    <option value="running">Running</option>
+                    <option value="queued">Queued</option>
+                    <option value="failed">Failed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+
+                  <select
+                    value={scanTypeFilter}
+                    onChange={(e) => setScanTypeFilter(e.target.value)}
+                    className="text-xs px-2.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-2xs hover:border-blue-300 transition-colors"
+                  >
+                    <option value="All">All Scan Types</option>
+                    <option value="Local Source">Local Source</option>
+                    <option value="Remote Git">Remote Git</option>
+                    <option value="Bulk Scan">Bulk Scan</option>
+                  </select>
+
+                  <button
+                    onClick={handleResetScanFilters}
+                    className="px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:text-red-600 dark:text-gray-300 dark:hover:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-950/40 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ml-1"
+                    title="Reset Filters"
+                  >
+                    <RotateCcw className="w-3 h-3 text-gray-400" />
+                    <span>Reset</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Table View */}
+            <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
+              <table className="w-full text-left text-xs min-w-[900px]">
+                <thead>
+                  <tr className="bg-slate-50/90 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200/80 dark:border-slate-700/80">
+                    <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">PROJECT NAME</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN DATE</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN STATUS</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN TYPE</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">CREATED BY</th>
+                    <th className="py-2.5 pr-4 pl-3 font-bold uppercase tracking-wider text-[11px] text-right whitespace-nowrap">ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {filteredScans.length > 0 ? (
+                    paginatedScans.map((s) => (
+                      <tr key={s.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
+                        {/* PROJECT NAME */}
+                        <td className="py-3 pl-4 pr-3 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <FolderGit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span
+                              onClick={() => setSelectedScanId(s.id)}
+                              className="font-bold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                            >
+                              {s.targetProject}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* APPLICATION NAME */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
+                            {s.appService || '—'}
+                          </span>
+                        </td>
+
+                        {/* SCAN DATE */}
+                        <td className="py-3 px-3 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">
+                          {s.timestamp}
+                        </td>
+
+                        {/* SCAN STATUS */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${s.status === 'completed'
+                            ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
+                            : s.status === 'running' || s.status === 'analyzing'
+                              ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60 animate-pulse'
+                              : s.status === 'failed'
+                                ? 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60'
+                                : s.status === 'cancelled'
+                                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
+                                  : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60'
+                            }`}>
+                            {s.status === 'running' || s.status === 'analyzing' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
+                            ) : s.status === 'completed' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                            ) : s.status === 'cancelled' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                            ) : s.status === 'failed' ? (
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
+                            ) : (
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            )}
+                            {displayStatus(s.status)}
+                            {(s.status === 'running' || s.status === 'analyzing') && ` ${s.progress}%`}
+                          </span>
+                        </td>
+
+                        {/* SCAN TYPE */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
+                            {s.scanType}
+                          </span>
+                        </td>
+
+                        {/* SCAN REQUESTED BY */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[10px] font-bold shrink-0">
+                              <User className="w-3 h-3" />
+                            </div>
+                            <span className="text-gray-700 dark:text-gray-300 font-medium text-xs">
+                              {(s as any).requestedBy || 'SecOps Admin'}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* ACTIONS */}
+                        <td className="py-3 pr-4 pl-3 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center justify-end">
+                            <ScanActionMenu
+                              scan={s}
+                              onViewDetails={(scan) => setSelectedScanId(scan.id)}
+                              onExport={(format, scanId) => exportSBOM(format, scanId)}
+                              onRescan={handleRescan}
+                              rescanning={rescanningId === s.id}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={7} className="py-8 px-4 text-center">
+                        <div className="flex flex-col items-center justify-center space-y-2">
+                          <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center justify-center shadow-2xs">
+                            <Search className="w-5 h-5" />
+                          </div>
+                          <div className="max-w-md mx-auto">
+                            <h4 className="text-sm font-bold text-gray-900 dark:text-white">
+                              No security scans available yet.
+                            </h4>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+                              No scan records found. Real security scans will appear once analysis is launched.
+                            </p>
+                          </div>
+                          {(scanSearch || scanStatusFilter !== 'All' || scanTypeFilter !== 'All') && (
+                            <button
+                              onClick={handleResetScanFilters}
+                              className="mt-1 px-3.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-750 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer inline-flex items-center gap-1.5"
+                            >
+                              Clear Filters
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Systematic Pagination Controls (15, 20, 25, 50, 100) */}
+            <TablePagination
+              currentPage={safeScanPage}
+              totalItems={totalScans}
+              pageSize={scanPageSize}
+              pageSizeOptions={[15, 20, 25, 50, 100]}
+              onPageChange={(page) => setScanPage(page)}
+              onPageSizeChange={(size) => {
+                setScanPageSize(size);
+                setScanPage(1);
+              }}
+              itemLabel="scans"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 1. NEW SCAN SUB-PAGE                                                      */}
+      {/* ========================================================================= */}
+      {activeTab === 'new' && (
+        <div key={launchFormKey} className="space-y-6">
+          <div className="flex items-center justify-between pb-1">
+            <button
+              type="button"
+              onClick={() => setTab('table')}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back to Security Scans</span>
+            </button>
+          </div>
+          {newScanStep === 'input' ? (
+            <form onSubmit={handleProceedToReview} className="space-y-6">
+              {/* SECTION 1: Project Information. Required for local and Git; optional for bulk, which reads these from the file. */}
+              <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-gray-900 dark:text-white">
+                      1. Project Information
+                    </h2>
+                    {/* Hover Info Tooltip (Excel Sr 9) */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onMouseEnter={() => setActiveTooltip('project-info')}
+                        onMouseLeave={() => setActiveTooltip(null)}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5"
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </button>
+                      {activeTooltip === 'project-info' && (
+                        <div className="absolute left-5 top-0 z-50 w-64 p-2 bg-gray-900 text-white text-[11px] rounded-lg shadow-xl border border-gray-700 pointer-events-none">
+                          Tell us what you are scanning and provide project identifiers used across compliance audits and SBOM reports.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-gray-400">
+                    {sourceType === 'bulk' ? 'Optional for bulk — each row supplies these' : '* Required fields'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <ProjectApplicationSelect
+                    variant="scan"
+                    required={sourceType !== 'bulk'}
+                    projectLabel="PROJECT NAME"
+                    applicationLabel="APPLICATION / SERVICE"
+                    projectHint="A short, descriptive name for your project."
+                    applicationHint="The application or service name."
+                    value={{ project: selectedProject, application: selectedApplication }}
+                    onChange={({ project, application }) => {
+                      setSelectedProject(project);
+                      setSelectedApplication(application);
+                    }}
+                  />
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      RELEASE / VERSION
+                    </label>
+                    <input
+                      type="text"
+                      value={releaseVersion}
+                      onChange={(e) => setReleaseVersion(e.target.value)}
+                      placeholder="e.g. v3.2.0"
+                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Application version or release tag.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: Choose Scan Source */}
+              <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-gray-900 dark:text-white">
+                      2. Choose Scan Source
+                    </h2>
+                    {/* Hover Info Tooltip (Excel Sr 9) */}
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onMouseEnter={() => setActiveTooltip('source-info')}
+                        onMouseLeave={() => setActiveTooltip(null)}
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-0.5"
+                      >
+                        <Info className="w-3.5 h-3.5" />
+                      </button>
+                      {activeTooltip === 'source-info' && (
+                        <div className="absolute left-5 top-0 z-50 w-64 p-2 bg-gray-900 text-white text-[11px] rounded-lg shadow-xl border border-gray-700 pointer-events-none">
+                          Select where your source code or project manifests are located: local directories, remote GitHub repositories, or bulk batch scan.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Select where your source code or SBOM is located.
+                  </p>
+                </div>
+
+                {/* 3 Scan Source Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {/* Card 1: Local Source Directory */}
+                  <div
+                    onClick={() => setSourceType('local')}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setIsDraggingOverCard(true);
+                    }}
+                    onDragLeave={() => setIsDraggingOverCard(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setIsDraggingOverCard(false);
+                      setSourceType('local');
+                      if (e.dataTransfer) {
+                        acceptLocalDrop(e.dataTransfer);
+                      }
+                    }}
+                    className={`relative rounded-xl p-4 border transition-all cursor-pointer flex flex-col justify-between ${
+                      isDraggingOverCard
+                        ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 ring-2 ring-blue-500/50 shadow-md'
+                        : sourceType === 'local'
+                        ? 'border-sky-500 bg-sky-50/30 dark:bg-sky-950/20 shadow-xs ring-1 ring-sky-500/30'
+                        : 'border-gray-200 dark:border-gray-800 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center">
+                        <Folder className="w-5 h-5" />
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${sourceType === 'local' ? 'border-sky-600' : 'border-gray-300'}`}>
+                        {sourceType === 'local' && <div className="w-2 h-2 rounded-full bg-sky-600" />}
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                        LOCAL SOURCE DIRECTORY
+                      </h3>
+                      <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">
+                        Upload your application source
+                      </p>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                        Scan a project directory from your local machine.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSourceType('local');
+                        openLocalUploadModal('files');
+                      }}
+                      className="mt-4 w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-2xs flex items-center justify-center gap-1.5 transition-colors"
+                      title="Upload files or import a folder"
+                    >
+                      <Upload className="w-3.5 h-3.5 shrink-0" />
+                      <span>Upload</span>
+                    </button>
+                    {(localFolder.length > 0 || localFile) && (
+                      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium truncate">
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">
+                          {localFolder.length > 0
+                            ? `${localFolder.length} files (${localFolderStats.totalFolders} folders)`
+                            : localFile?.name}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Card 2: Remote Git Repository (GitHub icon & text only, Excel Sr 3 & Sr 4) */}
+                  <div
+                    onClick={() => setSourceType('git')}
+                    className={`relative rounded-xl p-4 border transition-all cursor-pointer flex flex-col justify-between ${sourceType === 'git'
+                      ? 'border-sky-500 bg-sky-50/30 dark:bg-sky-950/20 shadow-xs ring-1 ring-sky-500/30'
+                      : 'border-gray-200 dark:border-gray-800 hover:border-gray-300'
+                      }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="w-9 h-9 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white flex items-center justify-center">
+                        <Github className="w-5 h-5" />
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${sourceType === 'git' ? 'border-sky-600' : 'border-gray-300'}`}>
+                        {sourceType === 'git' && <div className="w-2 h-2 rounded-full bg-sky-600" />}
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                        REMOTE GIT REPOSITORY
+                      </h3>
+                      <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">
+                        Connect remote Git provider
+                      </p>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                        Scan from GitHub repository URL or webhook branch.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSourceType('git');
+                      }}
+                      className="mt-4 w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-2xs"
+                    >
+                      Configure Git
+                    </button>
+                  </div>
+
+                  {/* Card 3: Bulk Spreadsheet Orchestration */}
+                  <div
+                    onClick={() => setSourceType('bulk')}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSourceType('bulk');
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) {
+                        void handleBulkFile(file);
+                      }
+                    }}
+                    className={`relative rounded-xl p-4 border transition-all cursor-pointer flex flex-col justify-between ${sourceType === 'bulk'
+                      ? 'border-sky-500 bg-sky-50/30 dark:bg-sky-950/20 shadow-xs ring-1 ring-sky-500/30'
+                      : 'border-gray-200 dark:border-gray-800 hover:border-gray-300'
+                      }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center">
+                        <FileSpreadsheet className="w-5 h-5" />
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${sourceType === 'bulk' ? 'border-sky-600' : 'border-gray-300'}`}>
+                        {sourceType === 'bulk' && <div className="w-2 h-2 rounded-full bg-sky-600" />}
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                        BULK SPREADSHEET
+                      </h3>
+                      <p className="text-xs font-semibold text-gray-800 dark:text-gray-200 mt-1">
+                        Multi-project batch scan
+                      </p>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                        Upload CSV / XLSX inventory matrix to scan all apps.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSourceType('bulk');
+                        bulkFileInputRef.current?.click();
+                      }}
+                      className="mt-4 w-full py-1.5 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-2xs"
+                    >
+                      Choose File
+                    </button>
+                  </div>
+                </div>
+
+                {/* Source Configuration Detail Panel */}
+                <div className="pt-2">
+                  {sourceType === 'local' && (
+                    <div className="bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
+                      <div
+                        onClick={() => openLocalUploadModal('files')}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          void acceptLocalDrop(e.dataTransfer);
+                        }}
+                        className="w-full border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center bg-white dark:bg-gray-800/60 hover:border-blue-400 transition-colors cursor-pointer group"
+                      >
+                        <Folder className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+                        <p className="text-xs font-bold text-gray-900 dark:text-white">
+                          Upload one manifest file, or a whole project folder
+                        </p>
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1 max-w-xl mx-auto">
+                          Folder mode scans every supported dependency file in the tree (mixed ecosystems in one folder are fine). File mode accepts a single manifest or a .zip archive.
+                        </p>
+                        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 max-w-xl mx-auto">
+                          {SUPPORTED_MANIFEST_HINT}
+                        </p>
+
+                        <input
+                          ref={folderInputRef}
+                          type="file"
+                          className="hidden"
+                          multiple
+                          onChange={(e) => {
+                            const items = Array.from(e.target.files || []).map((file) => ({
+                              file,
+                              relativePath: file.webkitRelativePath || file.name,
+                            }));
+                            useFolderManifests(items);
+                            e.target.value = '';
+                          }}
+                        />
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          className="hidden"
+                          multiple
+                          onChange={(e) => {
+                            const picked = Array.from(e.target.files || []);
+                            e.target.value = '';
+                            if (picked.length === 0) return;
+                            if (picked.length === 1) {
+                              const file = picked[0];
+                              if (file.size === 0) {
+                                setLocalFile(null);
+                                setLocalFolder([]);
+                                setSelectedFolder('');
+                                addToast({
+                                  type: 'error',
+                                  title: 'Empty File',
+                                  message: `The file "${file.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+                                });
+                                return;
+                              }
+                              setLocalFolder([]);
+                              setLocalFile(file);
+                              setSelectedFolder(file.name);
+                              const name = file.name.toLowerCase();
+                              if (name.includes('cyclonedx') || name === 'bom.json' || name === 'bom.xml') {
+                                setSbomFormat('CYCLONE DX');
+                              } else if (name.includes('spdx')) {
+                                setSbomFormat('SPDX');
+                              }
+                              return;
+                            }
+                            const valid = picked.filter((f) => f.size > 0);
+                            if (valid.length === 0) {
+                              setLocalFile(null);
+                              setLocalFolder([]);
+                              setSelectedFolder('');
+                              addToast({
+                                type: 'error',
+                                title: 'Empty Files',
+                                message: 'All selected files are empty (0 bytes). Empty files cannot be scanned.',
+                              });
+                              return;
+                            }
+                            const items: FolderFile[] = valid.map((file) => ({
+                              file,
+                              relativePath: (file as any).webkitRelativePath || file.name,
+                            }));
+                            useFolderManifests(items);
+                          }}
+                        />
+
+                        {/* Selected Folder Summary & Tree Inspector */}
+                        {localFolder.length > 0 && (
+                          <div className="mt-4 p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 text-left space-y-3 animate-in fade-in duration-150">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                                  <FolderOpen className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white font-mono break-all">
+                                      {localFolder[0]?.relativePath.replace(/\\/g, '/').split('/')[0] || selectedFolder}
+                                    </h4>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" /> All files & folders ready
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+                                      {getPrimaryFormatLabel()}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                    <span className="font-semibold text-gray-900 dark:text-white">{localFolderStats.totalFiles} files</span>
+                                    {localFolderStats.totalFolders > 0 && (
+                                      <span> across <span className="font-semibold text-gray-900 dark:text-white">{localFolderStats.totalFolders} subfolder{localFolderStats.totalFolders === 1 ? '' : 's'}</span></span>
+                                    )}
+                                    <span> · {formatBytes(localFolderStats.totalBytes)}</span>
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openLocalUploadModal('folder')}
+                                  className="px-2.5 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 rounded-lg transition-colors cursor-pointer"
+                                  title="Change to another folder"
+                                >
+                                  Change
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={clearLocalSelection}
+                                  className="px-2.5 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer"
+                                  title="Remove selection"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Scope confirmation banner */}
+                            <div className="p-2.5 bg-white dark:bg-gray-800/80 rounded-lg border border-blue-100 dark:border-blue-900/30 flex items-center justify-between text-xs flex-wrap gap-2">
+                              <div className="flex items-center gap-2">
+                                <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <span className="text-gray-700 dark:text-gray-300 text-[11px]">
+                                  System will package and scan <strong>all files and folders</strong> in this directory.
+                                </span>
+                              </div>
+                              {localFolderStats.manifests.length > 0 ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                                  {localFolderStats.manifests.length} manifest{localFolderStats.manifests.length === 1 ? '' : 's'} ({localFolderStats.ecosystems.join(', ')})
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                  Generic source scan (all files analyzed)
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Interactive tree/file inspector */}
+                            <div className="pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setShowFileTree((prev) => !prev)}
+                                className="text-xs font-semibold text-blue-700 dark:text-blue-300 hover:underline flex items-center gap-1.5 cursor-pointer py-0.5"
+                              >
+                                <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showFileTree ? 'rotate-180' : ''}`} />
+                                <span>
+                                  {showFileTree
+                                    ? 'Hide imported files and folders'
+                                    : `Inspect all imported files and folders (${localFolderStats.totalFiles} files)`}
+                                </span>
+                              </button>
+
+                              {showFileTree && (
+                                <div className="mt-2 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5 space-y-2">
+                                  <div className="relative">
+                                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-gray-400" />
+                                    <input
+                                      type="text"
+                                      value={fileFilter}
+                                      onChange={(e) => setFileFilter(e.target.value)}
+                                      placeholder="Filter files or subfolders..."
+                                      className="w-full text-xs pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    />
+                                    {fileFilter && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setFileFilter('')}
+                                        className="absolute right-2 top-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                                      >
+                                        <X className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  <div className="max-h-60 overflow-y-auto space-y-0.5 text-xs font-mono divide-y divide-gray-100 dark:divide-gray-800/60 pr-1">
+                                    {filteredLocalFiles.length === 0 ? (
+                                      <p className="text-center py-4 text-xs text-gray-400 font-sans">
+                                        No files matching "{fileFilter}"
+                                      </p>
+                                    ) : (
+                                      filteredLocalFiles.map((item, idx) => {
+                                        const rel = item.relativePath.replace(/\\/g, '/');
+                                        const isManifest = isManifestRelativePath(rel);
+                                        const hasSubdir = rel.includes('/');
+                                        return (
+                                          <div
+                                            key={idx}
+                                            className="py-1 px-1.5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded transition-colors gap-2"
+                                          >
+                                            <span className="truncate text-gray-800 dark:text-gray-200 flex items-center gap-1.5 min-w-0">
+                                              <span className="text-gray-400 shrink-0">
+                                                {hasSubdir ? '📁' : '📄'}
+                                              </span>
+                                              <span className="truncate">{rel}</span>
+                                              {isManifest && (
+                                                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 font-sans px-1 rounded shrink-0 font-semibold">
+                                                  manifest
+                                                </span>
+                                              )}
+                                            </span>
+                                            <span className="text-gray-400 text-[10px] shrink-0 font-sans">
+                                              {formatBytes(item.file.size)}
+                                            </span>
+                                          </div>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Selected Single File Summary */}
+                        {localFile && (
+                          <div className="mt-4 p-4 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 text-left space-y-2 animate-in fade-in duration-150">
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-start gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+                                  <FileText className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="text-sm font-bold text-gray-900 dark:text-white font-mono break-all">
+                                      {localFile.name}
+                                    </h4>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" /> File ready
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+                                      {getPrimaryFormatLabel()}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-gray-600 dark:text-gray-300 mt-1">
+                                    {formatBytes(localFile.size)} · Single file source
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => openLocalUploadModal('files')}
+                                  className="px-2.5 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-100/60 dark:hover:bg-blue-900/40 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  Change
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={clearLocalSelection}
+                                  className="px-2.5 py-1 text-xs font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition-colors cursor-pointer"
+                                >
+                                  Clear
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/40 rounded-lg text-xs text-blue-800 dark:text-blue-300">
+                        <Info className="w-4 h-4 shrink-0 text-blue-600" />
+                        <span>
+                          Your source is analyzed to discover dependencies and generate the SBOM. Source code is not displayed in the dashboard.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {sourceType === 'git' && (
+                    <div className="bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                            GITHUB REPOSITORY URL
+                          </label>
+                          <input
+                            type="url"
+                            value={gitUrl}
+                            onChange={(e) => setGitUrl(e.target.value)}
+                            placeholder="https://github.com/organization/payments-api"
+                            className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                            BRANCH OR COMMIT TAG
+                          </label>
+                          <input
+                            type="text"
+                            value={gitBranch}
+                            onChange={(e) => setGitBranch(e.target.value)}
+                            placeholder="main"
+                            className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                          GITHUB PERSONAL ACCESS TOKEN <span className="text-gray-400 font-normal">(Required for private repos)</span>
+                        </label>
+                        <input
+                          type="password"
+                          value={gitToken}
+                          onChange={(e) => setGitToken(e.target.value)}
+                          placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                          className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {sourceType === 'bulk' && (
+                    <div className="bg-gray-50/70 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700 rounded-xl p-4 space-y-4">
+                      {/* Header bar with mode switcher and template download */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pb-3 border-b border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wider">
+                            Batch Inventory Matrix
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800">
+                            .CSV / .XLSX
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={handleDownloadSampleCsv}
+                            className="px-2.5 py-1 text-xs font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-400 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-750 flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download Template (.CSV)
+                          </button>
+
+                          <div className="flex items-center bg-gray-200 dark:bg-gray-700 p-0.5 rounded-lg text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setBulkMode('file')}
+                              className={`px-2.5 py-0.5 rounded font-medium cursor-pointer transition-colors ${bulkMode === 'file'
+                                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-2xs font-bold'
+                                : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
+                                }`}
+                            >
+                              Spreadsheet File
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBulkMode('manual')}
+                              className={`px-2.5 py-0.5 rounded font-medium cursor-pointer transition-colors ${bulkMode === 'manual'
+                                ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-2xs font-bold'
+                                : 'text-gray-600 dark:text-gray-300 hover:text-gray-900'
+                                }`}
+                            >
+                              Manual List
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {bulkMode === 'file' ? (
+                        <div className="space-y-4">
+                          {/* Dropzone & Upload Button */}
+                          <div
+                            onClick={() => bulkFileInputRef.current?.click()}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              const file = e.dataTransfer.files?.[0];
+                              if (file) {
+                                void handleBulkFile(file);
+                              }
+                            }}
+                            className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-5 text-center bg-white dark:bg-gray-800/60 hover:border-blue-400 dark:hover:border-blue-500 transition-colors cursor-pointer group"
+                          >
+                            <div className="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center mx-auto mb-2 group-hover:scale-105 transition-transform">
+                              <FileSpreadsheet className="w-6 h-6" />
+                            </div>
+                            <p className="text-xs font-bold text-gray-900 dark:text-white">
+                              Upload Bulk Inventory Spreadsheet (.CSV, .XLSX, .XLS)
+                            </p>
+                            <p className="text-xs text-blue-600 font-semibold hover:underline mt-0.5">
+                              Drag and drop file here, or browse files
+                            </p>
+                            <p className="text-[10px] text-gray-400 mt-1.5">
+                              Required columns: project_name, application_name, version, repository_url
+                            </p>
+                            <p className="text-[10px] text-gray-400 mt-1">
+                              The same GitHub repository and branch is one project. The first row is scanned. Later copies and invalid rows are skipped, and the rest of the file still runs.
+                            </p>
+                            <input
+                              ref={bulkFileInputRef}
+                              type="file"
+                              accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                              className="hidden"
+                              onChange={handleBulkFileUpload}
+                            />
+                          </div>
+
+                          {/* Selected File Card & Verification Status */}
+                          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 border border-emerald-200 dark:border-emerald-800/50 flex items-center justify-center shrink-0">
+                                <FileSpreadsheet className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-bold text-gray-900 dark:text-white font-mono">
+                                    {bulkFile.name}
+                                  </span>
+                                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${bulkFileError || bulkProjects.some((row) => row.rowStatus && row.rowStatus !== 'ready')
+                                    ? 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                                    : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                    }`}>
+                                    {bulkFileError ? 'Invalid file' : bulkProjects.some((row) => row.rowStatus && row.rowStatus !== 'ready') ? 'Needs review' : 'Verified'}
+                                  </span>
+                                </div>
+                                <span className="text-[11px] text-gray-500">
+                                  {bulkFile.size} • {bulkProjects.length} Microservices Detected • {bulkFile.uploadedAt}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-center">
+                              <button
+                                type="button"
+                                onClick={() => bulkFileInputRef.current?.click()}
+                                className="px-2.5 py-1 text-xs font-semibold text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-750 hover:bg-gray-100 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg cursor-pointer transition-colors"
+                              >
+                                Replace File
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Parsed Projects Matrix Table Preview */}
+                          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-2xs">
+                            <div className="px-3.5 py-2.5 bg-gray-50/80 dark:bg-gray-750/50 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                              <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
+                                Parsed Projects Matrix ({bulkProjects.length})
+                              </span>
+                              <span className="text-[11px] text-gray-400">
+                                {bulkProjects.filter((row) => !row.rowStatus || row.rowStatus === 'ready').length} ready
+                                {' · '}
+                                {bulkProjects.filter((row) => row.rowStatus === 'duplicate').length} duplicate
+                                {' · '}
+                                {bulkProjects.filter((row) => row.rowStatus === 'invalid').length} invalid
+                              </span>
+                            </div>
+
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="border-b border-gray-200 dark:border-gray-700 text-gray-500 text-[11px] uppercase tracking-wider bg-gray-50/40 dark:bg-gray-800/40">
+                                    <th className="p-2.5 pl-3.5 font-bold">#</th>
+                                    <th className="p-2.5 font-bold">Project Name</th>
+                                    <th className="p-2.5 font-bold">Repository / Source Path</th>
+                                    <th className="p-2.5 font-bold">Branch / Tag</th>
+                                    <th className="p-2.5 font-bold">Ecosystem</th>
+                                    <th className="p-2.5 pr-3.5 font-bold text-right">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 dark:divide-gray-800 font-medium">
+                                  {bulkProjects.map((row, index) => (
+                                    <tr key={row.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-750/30">
+                                      <td className="p-2.5 pl-3.5 text-gray-400 font-mono text-[11px]">{row.rowNumber || index + 1}</td>
+                                      <td className="p-2.5 font-bold text-gray-900 dark:text-white">{row.project}</td>
+                                      <td className="p-2.5 font-mono text-[11px] text-gray-600 dark:text-gray-300 truncate max-w-[220px]" title={row.rowMessage || row.source}>
+                                        {row.source}
+                                      </td>
+                                      <td className="p-2.5 font-mono text-[11px] text-gray-500">{row.branch}</td>
+                                      <td className="p-2.5">
+                                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
+                                          {row.ecosystem}
+                                        </span>
+                                      </td>
+                                      <td className="p-2.5 pr-3.5 text-right">
+                                        {row.rowStatus === 'duplicate' ? (
+                                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-600 dark:text-amber-400" title={row.rowMessage}>
+                                            <AlertTriangle className="w-3.5 h-3.5" />
+                                            Duplicate
+                                          </span>
+                                        ) : row.rowStatus === 'invalid' ? (
+                                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-red-600 dark:text-red-400" title={row.rowMessage}>
+                                            <AlertTriangle className="w-3.5 h-3.5" />
+                                            Invalid
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400" title={row.rowMessage}>
+                                            <CheckCircle2 className="w-3.5 h-3.5" />
+                                            Ready
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Manual Textarea Fallback */
+                        <div className="space-y-2">
+                          <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                            REPOSITORIES OR DIRECTORIES TO BATCH SCAN (One per line)
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={bulkScanList}
+                            onChange={(e) => setBulkScanList(e.target.value)}
+                            className="w-full text-xs px-3 py-2 font-mono bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 resize-none"
+                            placeholder="https://github.com/expressjs/express&#10;https://github.com/pallets/flask"
+                          />
+                          <p className="text-[11px] text-gray-500">
+                            Enter Git repository URLs or absolute local folder paths separated by new lines.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+
+
+              {/* Bottom Action Bar: Cancel and Launch Scan (Excel Sr 6) */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setTab('table')}
+                  className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold flex items-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <span>Launch Scan</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </form>
+          ) : (
+            /* STAGE 2: REVIEW PAGE (Excel Sr 5 & Sr 8) */
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-6 shadow-2xs space-y-6">
+                <div className="flex items-center justify-between pb-4 border-b border-gray-100 dark:border-gray-800">
+                  <div>
+                    <h2 className="text-sm font-bold text-gray-900 dark:text-white">
+                      Review Scan Configuration
+                    </h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      Verify the parameters below before initiating SBOM generation and supply chain analysis.
+                    </p>
+                  </div>
+                  <span className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-bold rounded-lg">
+                    Ready to Launch
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Project Details
+                    </h3>
+                    <div className="bg-gray-50/70 dark:bg-gray-800/40 rounded-xl p-4 border border-gray-200 dark:border-gray-700 space-y-2.5 text-xs">
+                      {sourceType === 'bulk' ? (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Project Name:</span>
+                            <span className="font-bold text-gray-900 dark:text-white">{projectName.trim() || 'From file'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Application / Service:</span>
+                            <span className="font-semibold text-gray-900 dark:text-white">{appService.trim() || 'From file'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Release Version:</span>
+                            <span className="font-mono font-semibold text-gray-900 dark:text-white">{releaseVersion.trim() || 'From file'}</span>
+                          </div>
+                          <p className="text-gray-500 pt-2 border-t border-gray-200 dark:border-gray-700">Each ready row is its own scan. Duplicate projects and invalid rows are skipped.</p>
+                          {bulkProjects.length > 0 && (
+                            <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                              {bulkProjects.map((row) => (
+                                <div key={row.id} className="flex justify-between gap-3">
+                                  <span className="font-semibold text-gray-900 dark:text-white truncate">{row.project}</span>
+                                  <span className={`truncate ${row.rowStatus === 'invalid' ? 'text-red-600' : row.rowStatus === 'duplicate' ? 'text-amber-600' : 'text-gray-500'}`}>
+                                    {row.rowStatus === 'duplicate' ? 'Duplicate' : row.rowStatus === 'invalid' ? 'Invalid' : `${row.name} · ${row.version || 'UNKNOWN'}`}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Project Name:</span>
+                            <span className="font-bold text-gray-900 dark:text-white">{projectName}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Application / Service:</span>
+                            <span className="font-semibold text-gray-900 dark:text-white">{appService}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Release Version:</span>
+                            <span className="font-mono font-semibold text-gray-900 dark:text-white">{releaseVersion}</span>
+                          </div>
+                          <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <span className="text-gray-500 block mb-1">Description:</span>
+                            <p className="text-gray-700 dark:text-gray-300 italic">{description}</p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Scan Source & Engine
+                    </h3>
+                    <div className="bg-gray-50/70 dark:bg-gray-800/40 rounded-xl p-4 border border-gray-200 dark:border-gray-700 space-y-2.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Source Type:</span>
+                        <span className="font-bold text-gray-900 dark:text-white capitalize">
+                          {sourceType === 'local' ? 'Local Source Directory' : sourceType === 'git' ? 'Remote Git (GitHub)' : 'Bulk Spreadsheet Matrix'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Target Location:</span>
+                        <span className="font-mono text-gray-900 dark:text-white truncate max-w-[220px]">
+                          {sourceType === 'local' ? selectedFolder : sourceType === 'git' ? gitUrl : `${bulkFile.name} (${bulkProjects.length} Projects)`}
+                        </span>
+                      </div>
+                      {sourceType === 'local' && localFolder.length > 0 && (
+                        <div className="flex justify-between items-center text-xs">
+                          <span className="text-gray-500">Import Scope:</span>
+                          <span className="font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            All {localFolderStats.totalFiles} files across {localFolderStats.totalFolders} folders
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-500">Primary Format:</span>
+                        <select
+                          value={sbomFormat}
+                          onChange={(e) => setSbomFormat(e.target.value as 'SPDX' | 'CYCLONE DX')}
+                          className="font-bold text-blue-600 dark:text-blue-400 bg-transparent text-xs cursor-pointer border border-blue-200 dark:border-blue-800/80 rounded px-2 py-0.5 hover:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
+                        >
+                          <option value="SPDX" className="text-gray-900 dark:text-white bg-white dark:bg-gray-800">SPDX</option>
+                          <option value="CYCLONE DX" className="text-gray-900 dark:text-white bg-white dark:bg-gray-800">CYCLONE DX</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl p-4 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 flex items-center justify-center">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 dark:text-white">Scan engine initialized and ready</p>
+                      <p className="text-gray-500 dark:text-gray-400 text-[11px]">
+                        Estimated duration: ~18 seconds. Lockfile resolution, CVE matching and attestation will execute.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">~18s</span>
+                </div>
+              </div>
+
+              {/* Bottom Action Bar: Back and Prominent Launch Scan (Excel Sr 8) */}
+              <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setNewScanStep('input')}
+                  className="px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                >
+                  ← Back to Configuration
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={handleFinalLaunchScan}
+                  className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-bold flex items-center gap-2 shadow-md cursor-pointer transition-colors"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Dispatching Scan...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 fill-white" />
+                      <span>Launch Scan</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. LIVE JOBS SUB-PAGE (Workspace UI Spec Section 11)                      */}
+      {/* ========================================================================= */}
+      {activeTab === 'live' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-between pb-1">
+            <button
+              type="button"
+              onClick={goToLaunchScan}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
+              title="Back to Launch Scan"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Back</span>
+            </button>
+          </div>
+          {waitingScans.length > 0 && (
+            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xs overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Waiting in queue</h2>
+                <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                  {waitingScans.length} not started
+                </span>
+              </div>
+              <div className="divide-y divide-gray-100 dark:divide-gray-800">
+                {waitingScans.map((scan) => (
+                  <div key={scan.id} className="px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{scan.targetProject}</p>
+                      <p className="text-[11px] text-gray-500 truncate">{scan.appService || scan.scanType} · {scan.source}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={cancellingId === scan.id}
+                      onClick={() => handleCancel(scan)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-rose-300 hover:text-rose-700 dark:hover:text-rose-300 text-xs font-semibold cursor-pointer disabled:opacity-50 shrink-0"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      {cancellingId === scan.id ? 'Stopping' : 'Cancel'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {activeScan ? (
+            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-6 shadow-2xs space-y-6">
+              {/* Job Summary Banner */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100 dark:border-gray-800">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${scanFailed
+                      ? 'bg-red-50 dark:bg-red-950/40 text-red-600'
+                      : activeScan.status === 'completed'
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600'
+                        : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600'
+                    }`}>
+                    {scanFailed ? <AlertTriangle className="w-5 h-5" /> : activeScan.status === 'completed' ? <CheckCircle2 className="w-5 h-5" /> : <Radio className={`w-5 h-5 ${isOpenStatus(activeScan.status) ? 'animate-pulse' : ''}`} />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-base font-bold text-gray-900 dark:text-white">
+                        {activeScan.targetProject}
+                      </h2>
+                      <span className="font-mono text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-300">
+                        {activeScan.id}
+                      </span>
+                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${scanFailed
+                          ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                          : activeScan.status === 'completed'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : activeScan.status === 'cancelled'
+                              ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                              : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                        }`}>
+                        {displayStatus(activeScan.status)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      {activeScan.scanType} • {activeScan.source}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 mr-2">
+                    <Clock className="w-4 h-4 text-gray-400" />
+                    <span>{isOpenStatus(activeScan.status) ? (activeScan.startedAt ? 'Elapsed' : 'Queue') : 'Duration'}: <strong className="text-gray-900 dark:text-white font-mono">{activeScan.startedAt ? formatDuration(activeScan.startedAt, isOpenStatus(activeScan.status) ? undefined : activeScan.completedAt, now) : 'Waiting to start'}</strong></span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={goToLaunchScan}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-gray-50 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-2xs"
+                    title="Back to Launch Scan"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    Back
+                  </button>
+                  {canCancel(activeScan.status) && (
+                    <button
+                      type="button"
+                      disabled={cancellingId === activeScan.id}
+                      onClick={() => handleCancel(activeScan)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-rose-300 hover:text-rose-700 dark:hover:text-rose-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                    >
+                      <Ban className="w-3.5 h-3.5" />
+                      {cancellingId === activeScan.id ? 'Stopping' : 'Cancel scan'}
+                    </button>
+                  )}
+                  {canRescan(activeScan.status) && !activeScan.isBulkAggregate && (
+                    <button
+                      type="button"
+                      disabled={rescanningId === activeScan.id}
+                      onClick={() => handleRescan(activeScan)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                    >
+                      <RotateCcw className={`w-3.5 h-3.5 ${rescanningId === activeScan.id ? 'animate-spin' : ''}`} />
+                      {rescanningId === activeScan.id ? 'Queuing' : 'Rescan'}
+                    </button>
+                  )}
+                  {activeScan.status === 'completed' && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/vulnerabilities?project=${encodeURIComponent(activeScan.targetProject)}`)}
+                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1.5 transition-colors"
+                      title={`View all findings for ${activeScan.targetProject} in Vulnerability Management`}
+                    >
+                      <Shield className="w-3.5 h-3.5" />
+                      <span>View Findings ({activeScan.cvesFound || 0})</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedScanId(activeScan.id)}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
+                  >
+                    View results
+                  </button>
+                </div>
+              </div>
+
+              {activeScan.errorMessage && (scanFailed || activeScan.status === 'cancelled') && (
+                <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-800 dark:text-red-200">
+                  <span className="font-bold">{activeScan.errorCode || 'Error'}: </span>
+                  {activeScan.errorMessage}
+                </div>
+              )}
+
+              <div>
+                <div className="flex justify-between text-xs font-semibold mb-1.5">
+                  <span className="text-gray-700 dark:text-gray-300">
+                    {activeScan.isBulkAggregate ? 'Batch progress' : stageLabel(activeScan.stage)}
+                  </span>
+                  <span className={`font-mono font-bold ${scanFailed ? 'text-red-600' : activeScan.status === 'completed' ? 'text-emerald-600' : 'text-blue-600 dark:text-blue-400'}`}>{activeScan.progress}%</span>
+                </div>
+                <div className="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`${scanFailed ? 'bg-red-500' : activeScan.status === 'cancelled' ? 'bg-slate-400' : activeScan.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-600'} h-2 rounded-full transition-all duration-500`}
+                    style={{ width: `${activeScan.progress}%` }}
+                  />
+                </div>
+              </div>
+
+              {activeScan.isBulkAggregate && (
+                <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="text-gray-500 border-b border-gray-100 dark:border-gray-800">
+                        <th className="px-3 py-2 font-semibold">Project</th>
+                        <th className="px-3 py-2 font-semibold">Repository</th>
+                        <th className="px-3 py-2 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {(activeScan.bulkItems || []).map((item) => {
+                        const child = bulkChildren.find((scan) => scan.id === item.scanId);
+                        const status = child?.status || item.status.toLowerCase();
+                        return (
+                          <tr key={`${item.rowNumber}-${item.scanId || item.repositoryUrl}`}>
+                            <td className="px-3 py-2 font-semibold text-gray-900 dark:text-white">{item.projectName || item.applicationName || '—'}</td>
+                            <td className="px-3 py-2 font-mono text-gray-500 max-w-[240px] truncate">{item.repositoryUrl}</td>
+                            <td className="px-3 py-2">
+                              <span className="uppercase font-bold text-[10px]">{displayStatus(status)}</span>
+                              {child && (child.status === 'running' || child.status === 'analyzing') && (
+                                <span className="text-gray-500"> · {stageLabel(child.stage)} {child.progress}%</span>
+                              )}
+                              {item.errorMessage && status !== 'completed' && status !== 'running' && status !== 'queued' && status !== 'analyzing' && (
+                                <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">{item.errorMessage}</p>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {pipelineScan && (
+                <div className="space-y-2">
+                  {activeScan.isBulkAggregate && (
+                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                      Current row: {pipelineScan.targetProject} · {stageLabel(pipelineScan.stage)}
+                    </p>
+                  )}
+                  <PipelineGrid job={pipelineScan} />
+                </div>
+              )}
+
+              {activeScan.status === 'completed' && !activeScan.isBulkAggregate && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/software-inventory?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-blue-400 hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-all group"
+                    title={`View ${activeScan.componentsFound} components in Software Inventory`}
+                  >
+                    <p className="text-gray-500 flex items-center justify-between">
+                      <span>Components</span>
+                      <ExternalLink className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white">{activeScan.componentsFound}</p>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/vulnerabilities?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/30 px-3 py-2 cursor-pointer hover:border-blue-500 hover:bg-blue-100/50 dark:hover:bg-blue-900/40 transition-all group ring-1 ring-blue-500/20 shadow-2xs"
+                    title={`Click to view all ${activeScan.cvesFound} findings in Vulnerability Management for ${activeScan.targetProject}`}
+                  >
+                    <p className="text-blue-600 dark:text-blue-400 font-bold flex items-center justify-between">
+                      <span>Findings</span>
+                      <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{activeScan.cvesFound}</p>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Critical' });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/vulnerabilities?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-red-400 hover:bg-red-50/30 dark:hover:bg-red-950/20 transition-all group"
+                    title={`Click to view critical findings in Vulnerability Management`}
+                  >
+                    <p className="text-gray-500 flex items-center justify-between">
+                      <span>Critical</span>
+                      <ExternalLink className="w-3 h-3 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-red-600">{activeScan.criticals || 0}</p>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'High' });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/vulnerabilities?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-orange-400 hover:bg-orange-50/30 dark:hover:bg-orange-950/20 transition-all group"
+                    title={`Click to view high findings in Vulnerability Management`}
+                  >
+                    <p className="text-gray-500 flex items-center justify-between">
+                      <span>High</span>
+                      <ExternalLink className="w-3 h-3 text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-orange-500">{activeScan.highs || 0}</p>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Medium' });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/vulnerabilities?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 dark:hover:bg-amber-950/20 transition-all group"
+                    title={`Click to view medium findings in Vulnerability Management`}
+                  >
+                    <p className="text-gray-500 flex items-center justify-between">
+                      <span>Medium</span>
+                      <ExternalLink className="w-3 h-3 text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-amber-500">{activeScan.mediums || 0}</p>
+                  </div>
+                  <div
+                    onClick={() => {
+                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Low' });
+                      if (activeScan.id) params.set('scan', activeScan.id);
+                      if (activeScan.appService) params.set('app', activeScan.appService);
+                      navigate(`/vulnerabilities?${params.toString()}`);
+                    }}
+                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-sky-400 hover:bg-sky-50/30 dark:hover:bg-sky-950/20 transition-all group"
+                    title={`Click to view low findings in Vulnerability Management`}
+                  >
+                    <p className="text-gray-500 flex items-center justify-between">
+                      <span>Low</span>
+                      <ExternalLink className="w-3 h-3 text-sky-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </p>
+                    <p className="text-lg font-bold text-sky-500">{activeScan.lows || 0}</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-gray-950 rounded-xl p-4 text-xs font-mono text-gray-300 space-y-1.5 shadow-inner max-h-52 overflow-y-auto">
+                <div className="flex items-center justify-between text-gray-500 text-[11px] pb-2 border-b border-gray-800">
+                  <span className="flex items-center gap-1.5">
+                    <Terminal className="w-3.5 h-3.5 text-gray-400" />
+                    Scan stage log
+                  </span>
+                  <span>{pipelineScan?.events?.length ? `${pipelineScan.events.length} events` : 'Waiting for events'}</span>
+                </div>
+                {(pipelineScan?.events?.length ? pipelineScan.events : []).map((event) => (
+                  <p key={event.id} className="leading-relaxed">
+                    <span className="text-gray-600">[{formatEventTime(event.createdAt)}]</span> {event.stage}: {event.message}
+                  </p>
+                ))}
+                {!pipelineScan?.events?.length && (activeScan.logMessages || []).map((log, i) => (
+                  <p key={i} className="leading-relaxed">{log}</p>
+                ))}
+              </div>
+            </div>
+          ) : waitingScans.length > 0 ? null : (
+            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-12 text-center space-y-3 shadow-2xs">
+              <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center justify-center mx-auto">
+                <Radio className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                No scans currently executing
+              </h3>
+              <p className="text-xs text-gray-500 max-w-sm mx-auto">
+                All scheduled and manual jobs have completed. Launch a new scan from the New Scan tab.
+              </p>
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={goToLaunchScan}
+                  className="px-4 py-2 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 text-xs font-semibold rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                  title="Back to Launch Scan"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  Back
+                </button>
+                <button
+                  onClick={goToLaunchScan}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer"
+                >
+                  + Launch New Scan
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. SCAN HISTORY SUB-PAGE (Workspace UI Spec Section 12)                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'history' && (
+        <div className="space-y-6">
+
+          <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs space-y-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Filter by Job ID or project..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <select
+                value={historyStatusFilter}
+                onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                className="text-xs px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300"
+              >
+                <option value="All">All Statuses</option>
+                <option value="completed">Completed</option>
+                <option value="failed">Failed</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="running">Running</option>
+                <option value="queued">Queued</option>
+              </select>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
+                    <th className="pb-3 font-semibold">JOB ID</th>
+                    <th className="pb-3 font-semibold">PROJECT & TAG</th>
+                    <th className="pb-3 font-semibold">SOURCE</th>
+                    <th className="pb-3 font-semibold">STATUS</th>
+                    <th className="pb-3 font-semibold">SUBMITTED</th>
+                    <th className="pb-3 font-semibold">CREATED BY</th>
+                    <th className="pb-3 font-semibold">COMPONENTS</th>
+                    <th className="pb-3 font-semibold">FINDINGS</th>
+                    <th className="pb-3 font-semibold text-right">ACTION</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {filteredHistory.map((job) => (
+                    <tr key={job.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40">
+                      <td className="py-3 font-mono font-semibold text-blue-600 dark:text-blue-400">
+                        {job.id}
+                      </td>
+                      <td className="py-3">
+                        <span className="font-bold text-gray-900 dark:text-white block">{job.targetProject}</span>
+                        <span className="text-[10px] text-gray-400 font-mono">{job.releaseTag || 'v1.0.0'}</span>
+                      </td>
+                      <td className="py-3 text-gray-600 dark:text-gray-400 max-w-[180px] truncate" title={job.source}>
+                        {job.source}
+                      </td>
+                      <td className="py-3">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${job.status === 'completed'
+                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : job.status === 'failed'
+                            ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                            : job.status === 'cancelled'
+                              ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                              : job.status === 'running' || job.status === 'analyzing'
+                                ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                                : 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                          }`}>
+                          {job.status}
+                        </span>
+                      </td>
+                      <td className="py-3 text-gray-500 dark:text-gray-400">{job.timestamp}</td>
+                      <td className="py-3 text-gray-700 dark:text-gray-300 font-medium">
+                        {(job as any).requestedBy || (job as any).createdBy || 'SecOps Admin'}
+                      </td>
+                      <td className="py-3 font-semibold text-gray-900 dark:text-white">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const params = new URLSearchParams();
+                            params.set('project', job.targetProject);
+                            if (job.id) params.set('scan', job.id);
+                            if (job.appService) params.set('app', job.appService);
+                            navigate(`/software-inventory?${params.toString()}`);
+                          }}
+                          className="hover:underline hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer text-left"
+                          title={`View components for ${job.targetProject}${job.appService ? ` (${job.appService})` : ''} in Software Inventory`}
+                        >
+                          {job.componentsFound}
+                        </button>
+                      </td>
+                      <td className="py-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const params = new URLSearchParams();
+                            params.set('project', job.targetProject);
+                            if (job.id) params.set('scan', job.id);
+                            if (job.appService) params.set('app', job.appService);
+                            navigate(`/vulnerabilities?${params.toString()}`);
+                          }}
+                          className="text-left hover:underline cursor-pointer group flex items-center gap-1.5"
+                          title={`View findings for ${job.targetProject}${job.appService ? ` (${job.appService})` : ''} in Vulnerability Management`}
+                        >
+                          <span>
+                            <span className="text-red-600 dark:text-red-400 font-semibold">{job.criticals || 0} Crit</span> •{' '}
+                            <span className="text-orange-500 dark:text-orange-400 font-semibold">{job.highs || 0} High</span> •{' '}
+                            <span className="text-amber-500 dark:text-amber-400 font-semibold">{job.mediums || 0} Med</span> •{' '}
+                            <span className="text-sky-500 dark:text-sky-400 font-semibold">{job.lows || 0} Low</span>
+                          </span>
+                          <ExternalLink className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                        </button>
+                      </td>
+                      <td className="py-3 text-right">
+                        <div className="inline-flex items-center justify-end">
+                          <ScanActionMenu
+                            scan={job}
+                            onViewDetails={(scan) => setSelectedScanId(scan.id)}
+                            onExport={(format, scanId) => exportSBOM(format, scanId)}
+                            onRescan={handleRescan}
+                            rescanning={rescanningId === job.id}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. SCHEDULED SCANS SUB-PAGE (Workspace UI Spec Section 13)                */}
+      {/* ========================================================================= */}
+      {activeTab === 'schedules' && (
+        <div className="space-y-6">
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => setCreateScheduleModalOpen(true)}
+              className="px-3.5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-2xs inline-flex items-center gap-2 cursor-pointer transition-colors shrink-0"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Create Schedule</span>
+            </button>
+          </div>
+
+          {schedulesList.length === 0 ? (
+            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl p-12 text-center">
+              <div className="flex flex-col items-center justify-center max-w-md mx-auto space-y-3">
+                <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-500 border border-blue-200 dark:border-blue-800">
+                  <Calendar className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">No Scheduled Scans Yet</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Static placeholder data has been removed. Configure your first real recurring scan schedule below to automate security audits.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCreateScheduleModalOpen(true)}
+                  className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm inline-flex items-center gap-2 cursor-pointer transition-colors mt-2"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  <span>Create Scan Schedule</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {schedulesList.map((sched) => (
+                <div
+                  key={sched.id}
+                  className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs flex flex-col justify-between space-y-4"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-950/60 text-orange-600 flex items-center justify-center shrink-0">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={sched.enabled}
+                          onChange={() => toggleSchedule(sched.id)}
+                          className="rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>{sched.enabled ? 'Enabled' : 'Disabled'}</span>
+                      </label>
+                    </div>
+
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-white mt-3">
+                      {sched.name}
+                    </h3>
+                    <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-0.5">
+                      {sched.project}
+                    </p>
+
+                    <div className="mt-3 space-y-1.5 text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-lg border border-gray-100 dark:border-gray-700/60">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Cadence:</span>
+                        <span className="font-semibold text-gray-800 dark:text-gray-200">{sched.frequency}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Next Run:</span>
+                        <span className="text-emerald-600 font-semibold">{sched.nextRun}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Last Run:</span>
+                        <span>{sched.lastRun}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800 text-xs">
+                    <button
+                      onClick={() => {
+                        addToast({
+                          type: 'info',
+                          title: 'Schedule Dispatched',
+                          message: `Triggered immediate run of "${sched.name}".`,
+                        });
+                        setTab('live');
+                      }}
+                      className="font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      Run Now
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setSchedulesList((prev) => prev.filter((s) => s.id !== sched.id));
+                        addToast({ type: 'info', title: 'Schedule Deleted', message: `Removed schedule.` });
+                      }}
+                      className="text-gray-400 hover:text-red-600 cursor-pointer p-1"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedHistoryScan && (
+        <ScanResultDetails
+          job={selectedHistoryScan}
+          related={scansHistory.filter((scan) => selectedHistoryScan.bulkId && scan.bulkId === selectedHistoryScan.bulkId && !scan.isBulkAggregate)}
+          now={now}
+          cancelling={cancellingId === selectedHistoryScan.id}
+          rescanning={rescanningId === selectedHistoryScan.id}
+          canCancel={canCancel(selectedHistoryScan.status)}
+          canRescan={canRescan(selectedHistoryScan.status)}
+          onClose={() => setSelectedScanId(null)}
+          onCancel={handleCancel}
+          onRescan={handleRescan}
+          onOpenScan={setSelectedScanId}
+          onExport={(format, scanId) => exportSBOM(format, scanId)}
+        />
+      )}
+
+      {/* Create Schedule Modal */}
+      {createScheduleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn backdrop-blur-xs">
+          <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center">
+                  <Calendar className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">Create Scan Schedule</h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">Configure recurring automated SBOM security audits</p>
+                </div>
+              </div>
+              <button onClick={() => setCreateScheduleModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSchedule} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Schedule Name</label>
+                <input
+                  type="text"
+                  required
+                  value={newSchedName}
+                  onChange={(e) => setNewSchedName(e.target.value)}
+                  placeholder="e.g. Nightly Core Scan"
+                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Target Project</label>
+                <select
+                  value={newSchedProject}
+                  onChange={(e) => setNewSchedProject(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                >
+                  <option value="Payments API">Payments API</option>
+                  <option value="Customer Portal">Customer Portal</option>
+                  <option value="Checkout Service">Checkout Service</option>
+                  <option value="Mobile App Backend">Mobile App Backend</option>
+                  <option value="Admin Portal">Admin Portal</option>
+                </select>
+              </div>
+
+              {/* Calendar Date and Time Picker Section */}
+              <div className="p-3.5 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 text-xs">
+                    <Calendar className="w-3.5 h-3.5 text-blue-500" />
+                    Select Date & Time (Calendar)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
+                      Execution Date
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={newSchedDate}
+                      onChange={(e) => setNewSchedDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
+                      Execution Time
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        type="time"
+                        required
+                        value={newSchedTime}
+                        onChange={(e) => setNewSchedTime(e.target.value)}
+                        className="w-full px-2.5 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer font-mono"
+                      />
+                      <select
+                        value={newSchedTimezone}
+                        onChange={(e) => setNewSchedTimezone(e.target.value)}
+                        className="w-full px-2 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+                      >
+                        <option value="UTC">UTC</option>
+                        <option value="EST">EST</option>
+                        <option value="PST">PST</option>
+                        <option value="IST">IST</option>
+                        <option value="CET">CET</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Date Presets */}
+                <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
+                  <span className="text-[10px] text-gray-400 font-bold uppercase">Quick Dates:</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const today = new Date().toISOString().split('T')[0];
+                      setNewSchedDate(today);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    Today
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tom = new Date();
+                      tom.setDate(tom.getDate() + 1);
+                      setNewSchedDate(tom.toISOString().split('T')[0]);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    Tomorrow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextWk = new Date();
+                      nextWk.setDate(nextWk.getDate() + 7);
+                      setNewSchedDate(nextWk.toISOString().split('T')[0]);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    +7 Days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const firstNextMo = new Date();
+                      firstNextMo.setMonth(firstNextMo.getMonth() + 1, 1);
+                      setNewSchedDate(firstNextMo.toISOString().split('T')[0]);
+                    }}
+                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    1st of Next Month
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Recurrence Frequency</label>
+                <select
+                  value={newSchedFreq}
+                  onChange={(e) => setNewSchedFreq(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
+                >
+                  <option value="Daily">Daily</option>
+                  <option value="Weekly on Sunday">Weekly on Sunday</option>
+                  <option value="Weekly on Monday">Weekly on Monday</option>
+                  <option value="Monthly (1st of month)">Monthly (1st of month)</option>
+                  <option value="One-time Run">One-time Run (No recurrence)</option>
+                </select>
+              </div>
+
+              {/* Summary Banner */}
+              <div className="p-2.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 rounded-lg flex items-center justify-between text-[11px]">
+                <div className="flex items-center gap-1.5 text-blue-800 dark:text-blue-300">
+                  <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>Next scheduled run:</span>
+                </div>
+                <span className="font-bold text-blue-900 dark:text-blue-200 font-mono">
+                  {newSchedDate || 'Selected Date'} @ {newSchedTime} {newSchedTimezone}
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setCreateScheduleModalOpen(false)}
+                  className="px-3.5 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>Create Schedule</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Local Source Upload Tabbed Modal (Matches User Reference Image) */}
+      {localUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-[#111827] rounded-xl max-w-xl w-full shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
+            {/* Tab Bar Header */}
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-800 px-6 pt-3.5 bg-gray-50/50 dark:bg-gray-900/40">
+              <div className="flex items-center gap-8">
+                <button
+                  type="button"
+                  onClick={() => setLocalModalTab('files')}
+                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${
+                    localModalTab === 'files'
+                      ? 'text-blue-600 dark:text-blue-400'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  Upload Files
+                  {localModalTab === 'files' && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLocalModalTab('folder')}
+                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${
+                    localModalTab === 'folder'
+                      ? 'text-blue-600 dark:text-blue-400'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                  }`}
+                >
+                  Import Folder
+                  {localModalTab === 'folder' && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400" />
+                  )}
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLocalUploadModalOpen(false)}
+                className="pb-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              {/* Dashed Dropzone */}
+              <div
+                onClick={() => {
+                  if (localModalTab === 'files') {
+                    modalFileInputRef.current?.click();
+                  } else {
+                    modalFolderInputRef.current?.click();
+                  }
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (localModalTab === 'files') {
+                    const file = e.dataTransfer.files?.[0];
+                    if (!file) return;
+                    if (file.size === 0) {
+                      addToast({
+                        type: 'error',
+                        title: 'Empty File',
+                        message: `The file "${file.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+                      });
+                      return;
+                    }
+                    setPendingLocalFile(file);
+                    setPendingLocalFolder([]);
+                  } else {
+                    const items = await filesFromDataTransfer(e.dataTransfer);
+                    if (!items || items.length === 0 || items.every((f) => f.file.size === 0)) {
+                      addToast({
+                        type: 'error',
+                        title: 'Empty Folder',
+                        message: 'The selected folder contains no files or only empty files (0 bytes). Empty folders cannot be scanned.',
+                      });
+                      return;
+                    }
+                    setPendingLocalFolder(items);
+                    setPendingLocalFile(null);
+                  }
+                }}
+                className="border border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 sm:p-7 text-center bg-gray-50/50 dark:bg-gray-800/30 hover:border-blue-500 dark:hover:border-blue-400 transition-colors cursor-pointer group"
+              >
+                <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto mb-2.5 group-hover:scale-105 transition-transform">
+                  {localModalTab === 'files' ? (
+                    <FileText className="w-5 h-5" />
+                  ) : (
+                    <Folder className="w-5 h-5" />
+                  )}
+                </div>
+                <p className="text-xs font-bold text-blue-600 dark:text-blue-400 group-hover:underline">
+                  {localModalTab === 'files' ? 'Drag & Drop or Browse files.' : 'Drag & Drop or Browse folder.'}
+                </p>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">
+                  Max size limit 400 MB
+                </p>
+                <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">
+                  {localModalTab === 'files'
+                    ? 'Max no of file(s) 25 · Supports package manifests, .zip, .tar.gz, CycloneDX, SPDX'
+                    : 'Imports all files & subfolders within the selected directory'}
+                </p>
+
+                <input
+                  ref={modalFileInputRef}
+                  type="file"
+                  multiple={false}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file) return;
+                    if (file.size === 0) {
+                      addToast({
+                        type: 'error',
+                        title: 'Empty File',
+                        message: `The file "${file.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+                      });
+                      return;
+                    }
+                    setPendingLocalFile(file);
+                    setPendingLocalFolder([]);
+                  }}
+                />
+                <input
+                  ref={modalFolderInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  // @ts-expect-error webkitdirectory standard folder attribute
+                  webkitdirectory=""
+                  directory=""
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files || []);
+                    e.target.value = '';
+                    if (picked.length === 0) return;
+                    const items: FolderFile[] = picked.map((file) => ({
+                      file,
+                      relativePath: (file as any).webkitRelativePath || file.name,
+                    }));
+                    const nonSkipped = items.filter((item) => {
+                      const rel = item.relativePath.replace(/\\/g, '/');
+                      return rel !== '' && !isInsideSkippedDir(rel);
+                    });
+                    const finalItems = nonSkipped.length > 0 ? nonSkipped : items;
+                    if (finalItems.length === 0 || finalItems.every((item) => item.file.size === 0)) {
+                      addToast({
+                        type: 'error',
+                        title: 'Empty Folder',
+                        message: 'The selected folder contains no files or only empty files (0 bytes). Empty folders cannot be scanned.',
+                      });
+                      return;
+                    }
+                    setPendingLocalFolder(finalItems);
+                    setPendingLocalFile(null);
+                  }}
+                />
+              </div>
+
+              {/* Preview Section */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  Preview:
+                </label>
+                {localModalTab === 'files' && pendingLocalFile ? (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 shadow-2xs">
+                    <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span className="font-medium max-w-xs truncate">{pendingLocalFile.name}</span>
+                    <span className="text-[10px] text-gray-400">({formatBytes(pendingLocalFile.size)})</span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingLocalFile(null)}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full cursor-pointer ml-1"
+                      title="Remove file"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : localModalTab === 'folder' && pendingLocalFolder.length > 0 ? (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 text-xs text-gray-800 dark:text-gray-200 shadow-2xs">
+                    <Folder className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                    <span className="font-medium max-w-xs truncate">
+                      {pendingLocalFolder[0]?.relativePath.replace(/\\/g, '/').split('/')[0] || 'Project Folder'}
+                    </span>
+                    <span className="text-[10px] text-gray-400">
+                      ({pendingLocalFolder.length} files, {formatBytes(pendingLocalFolder.reduce((acc, f) => acc + f.file.size, 0))})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingLocalFolder([])}
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full cursor-pointer ml-1"
+                      title="Remove folder"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 italic py-1">
+                    No {localModalTab === 'files' ? 'file' : 'folder'} selected yet
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer Buttons */}
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-gray-100 dark:border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => setLocalUploadModalOpen(false)}
+                  className="px-4 py-1.5 rounded-md border border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (localModalTab === 'files') {
+                      if (!pendingLocalFile) {
+                        addToast({
+                          type: 'warning',
+                          title: 'File Required',
+                          message: 'Please browse or drag and drop a file before uploading.',
+                        });
+                        return;
+                      }
+                      if (pendingLocalFile.size === 0) {
+                        addToast({
+                          type: 'error',
+                          title: 'Empty File',
+                          message: `The file "${pendingLocalFile.name}" is empty (0 bytes). Empty files cannot be scanned.`,
+                        });
+                        return;
+                      }
+                      setLocalFolder([]);
+                      setLocalFile(pendingLocalFile);
+                      setSelectedFolder(pendingLocalFile.name);
+                      const name = pendingLocalFile.name.toLowerCase();
+                      if (name.includes('cyclonedx') || name === 'bom.json' || name === 'bom.xml') {
+                        setSbomFormat('CYCLONE DX');
+                      } else if (name.includes('spdx')) {
+                        setSbomFormat('SPDX');
+                      }
+                      setLocalUploadModalOpen(false);
+                      addToast({
+                        type: 'success',
+                        title: 'File Ready',
+                        message: `Loaded ${pendingLocalFile.name} (${formatBytes(pendingLocalFile.size)}) for local scan.`,
+                      });
+                    } else {
+                      if (pendingLocalFolder.length === 0) {
+                        addToast({
+                          type: 'warning',
+                          title: 'Folder Required',
+                          message: 'Please browse or drag and drop a project folder before uploading.',
+                        });
+                        return;
+                      }
+                      if (pendingLocalFolder.every((f) => f.file.size === 0)) {
+                        addToast({
+                          type: 'error',
+                          title: 'Empty Folder',
+                          message: 'The selected folder contains no files or only empty files (0 bytes). Empty folders cannot be scanned.',
+                        });
+                        return;
+                      }
+                      useFolderManifests(pendingLocalFolder);
+                      setLocalUploadModalOpen(false);
+                      addToast({
+                        type: 'success',
+                        title: 'Folder Ready',
+                        message: `Imported folder with ${pendingLocalFolder.length} files for local scan.`,
+                      });
+                    }
+                  }}
+                  className="px-5 py-1.5 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer shadow-sm shadow-blue-500/20 transition-colors"
+                >
+                  Upload
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SecurityScans;

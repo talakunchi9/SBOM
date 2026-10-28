@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Node & frontend build artifacts
+dist/
+dist-ssr/
+.vite/
+*.local
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+secrets/
+
+# Databases & local data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/data/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

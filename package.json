@@ -1,0 +1,10 @@
+{
+  "name": "sbom",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev:all": "node scripts/dev-all.mjs",
+    "db:export": "node scripts/db.mjs export",
+    "db:import": "node scripts/db.mjs import"
+  }
+}
