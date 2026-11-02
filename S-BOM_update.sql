@@ -202,6 +202,7 @@ CREATE TABLE scans (
     application_id          TEXT NOT NULL DEFAULT '',
     application_name        TEXT NOT NULL DEFAULT '',
     application_version     TEXT NOT NULL DEFAULT '',
+    description             TEXT NOT NULL DEFAULT '',
     version_strategy        TEXT NOT NULL DEFAULT '',
     bom_type                TEXT NOT NULL DEFAULT 'SBOM',
     source_type             TEXT NOT NULL DEFAULT '',

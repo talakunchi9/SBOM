@@ -32,7 +32,7 @@ export const AddInventoryComponent: React.FC = () => {
   const [purl, setPurl] = useState('');
   const [purlManuallyEdited, setPurlManuallyEdited] = useState(false);
   const [riskLevel, setRiskLevel] = useState<Severity | 'Safe'>('Safe');
-  const [createdBy, setCreatedBy] = useState('');
+  const [createdBy, setCreatedBy] = useState('Asha Mehta');
 
   // Modal State for Upload File
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -64,7 +64,7 @@ export const AddInventoryComponent: React.FC = () => {
     const trimmedPkg = packageName.trim() || trimmedComp;
     const trimmedVer = version.trim();
     const trimmedFile = fileName.trim() || 'package.json';
-    const trimmedCreatedBy = createdBy.trim() || 'SecOps Admin';
+    const trimmedCreatedBy = createdBy.trim() || 'Asha Mehta';
 
     if (!selectedProject?.id) {
       addToast({
@@ -376,7 +376,7 @@ export const AddInventoryComponent: React.FC = () => {
                   type="text"
                   value={createdBy}
                   onChange={(e) => setCreatedBy(e.target.value)}
-                  placeholder="e.g. SecOps Admin"
+                  placeholder="e.g. Asha Mehta"
                   className="w-full px-2.5 py-1.5 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs"
                 />
               </div>

@@ -30,6 +30,7 @@ export interface Vulnerability {
   id: string;
   cve: string;
   name?: string;
+  title?: string;
   package: string;
   version: string;
   project: string;
@@ -102,6 +103,7 @@ export interface SBOMComponent {
   purl: string;
   sha256?: string;
   reposCount?: number;
+  dependencies?: string[] | number;
 }
 
 export interface RemediationTicket {
@@ -209,6 +211,9 @@ export interface BulkScanItemView {
   createdAt?: string;
   startedAt?: string;
   completedAt?: string;
+  createdBy?: string;
+  requestedBy?: string;
+  description?: string;
   duration?: string;
 }
 
@@ -241,6 +246,9 @@ export interface ScanJob {
   bulkItems?: BulkScanItemView[];
   startedAt?: string;
   completedAt?: string;
+  createdBy?: string;
+  requestedBy?: string;
+  description?: string;
 }
 
 export interface UserAccount {

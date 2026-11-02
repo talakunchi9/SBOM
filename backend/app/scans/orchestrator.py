@@ -100,6 +100,7 @@ class Orchestrator:
             "created_at": now,
             "bulk_scan_id": data.get("bulk_scan_id") or "",
             "bulk_row": data.get("bulk_row") or 0,
+            "description": data.get("description") or "",
         }
         self.scans.create_scan(scan)
         self.queue.enqueue(

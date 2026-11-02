@@ -170,7 +170,7 @@ export const ExportCenter: React.FC = () => {
       c.patchAvailable ? 'Yes' : 'No',
       c.directDependency ? 'Direct' : 'Transitive',
       `"${c.vex}"`,
-      `"${c.sha256 || 'SHA256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}"`,
+      `"${c.sha256 ? `SHA256:${c.sha256}` : ''}"`,
       `"${c.supplier}"`,
     ]);
 
@@ -240,7 +240,7 @@ export const ExportCenter: React.FC = () => {
         directDependency: c.directDependency,
         vexStatus: c.vex,
         supplier: c.supplier,
-        sha256: c.sha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+        sha256: c.sha256 || undefined,
         purl: c.purl,
       })),
       vulnerabilities: activeVulns.map((v) => ({
@@ -311,7 +311,7 @@ export const ExportCenter: React.FC = () => {
         `"${c.supplier}"`,
         `"security@${c.supplier.toLowerCase().replace(/\s+/g, '')}.org"`,
         '"SHA-256"',
-        `"${c.sha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'}"`,
+        `"${c.sha256 || ''}"`,
         c.directDependency ? '"Direct"' : '"Transitive"',
         `"${c.license}"`,
         c.license.includes('GPL') ? '"High (Copyleft)"' : '"Permissive (Safe)"',
@@ -381,11 +381,11 @@ export const ExportCenter: React.FC = () => {
         version: c.version,
         purl: c.purl,
         scope: c.directDependency ? 'required' : 'optional',
-        hashes: includeHashes
+        hashes: includeHashes && c.sha256
           ? [
             {
               alg: 'SHA-256',
-              content: c.sha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              content: c.sha256,
             },
           ]
           : undefined,
@@ -463,11 +463,11 @@ export const ExportCenter: React.FC = () => {
         filesAnalyzed: false,
         licenseConcluded: c.license,
         licenseDeclared: c.license,
-        checksums: includeHashes
+        checksums: includeHashes && c.sha256
           ? [
             {
               algorithm: 'SHA256',
-              checksumValue: c.sha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              checksumValue: c.sha256,
             },
           ]
           : undefined,
@@ -613,7 +613,7 @@ export const ExportCenter: React.FC = () => {
         materials: activeComponents.slice(0, 10).map((c) => ({
           uri: c.purl,
           digest: {
-            sha256: c.sha256 || 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+            sha256: c.sha256 || undefined,
           },
         })),
       },
@@ -808,7 +808,7 @@ export const ExportCenter: React.FC = () => {
                     Version: c.version,
                     Ecosystem: c.ecosystem,
                     Supplier: c.supplier,
-                    Hash: c.sha256?.slice(0, 12) || 'e3b0c442...',
+                    Hash: c.sha256 ? c.sha256.slice(0, 12) : '?',
                     License: c.license,
                     VEX: c.vex,
                   }));

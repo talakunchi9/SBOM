@@ -1,6 +1,8 @@
 import type { BulkScanItemView, ComponentFieldType, Ecosystem, LicenseType, SBOMComponent, ScanEventView, ScanJob, ScanStatus, Severity, Vulnerability } from '../types';
 import { formatDuration } from '../pages/scans/scanProgress';
 
+export { formatDuration };
+
 const BASE = import.meta.env.VITE_API_BASE || '';
 
 export class ApiError extends Error {
@@ -67,6 +69,7 @@ export interface ApiScan {
   file_name?: string;
   repository_url?: string;
   branch?: string;
+  description?: string;
 }
 
 export interface ApiScanStatus {
@@ -80,6 +83,7 @@ export interface ApiScanStatus {
   file_name?: string;
   repository_url?: string;
   branch?: string;
+  description?: string;
 }
 
 export interface ApiComponent {
@@ -344,6 +348,7 @@ export function createLocalScan(
   application: string,
   version: string,
   ids?: { projectId?: string; applicationId?: string },
+  description?: string,
 ): Promise<{ scan_id: string; status?: string; stage?: string }> {
   const body = new FormData();
   if (source.folderFiles && source.folderFiles.length > 0) {
@@ -370,6 +375,7 @@ export function createLocalScan(
   body.append('version', version || 'UNKNOWN');
   if (ids?.projectId) body.append('project_id', ids.projectId);
   if (ids?.applicationId) body.append('application_id', ids.applicationId);
+  if (description) body.append('description', description);
   return request('/api/v1/scans/local', { method: 'POST', body });
 }
 
@@ -382,6 +388,7 @@ export function createGitHubScan(input: {
   credentialId?: string;
   projectId?: string;
   applicationId?: string;
+  description?: string;
 }): Promise<{ scan_id: string; status?: string; stage?: string }> {
   return request('/api/v1/scans/github', {
     method: 'POST',
@@ -393,6 +400,7 @@ export function createGitHubScan(input: {
       application_id: input.applicationId || '',
       version: input.version || 'UNKNOWN',
       branch: input.branch,
+      description: input.description || '',
       authentication: input.credentialId ? { type: 'GITHUB_FINE_GRAINED_PAT', credential_id: input.credentialId } : undefined,
     }),
   });
@@ -501,6 +509,7 @@ export function sourceLabel(scan: {
   file_name?: string;
   repository_url?: string;
   branch?: string;
+  description?: string;
 }): string {
   if (scan.repository_url) {
     return scan.branch ? `${scan.repository_url} (${scan.branch})` : scan.repository_url;
@@ -540,6 +549,7 @@ export function mapScan(scan: ApiScan): ScanJob {
     targetProject: scan.project_id || scan.application_name,
     appService: scan.application_name,
     releaseTag: scan.application_version,
+    description: scan.description || undefined,
     scanType: bulkId ? 'Bulk Scan' : scan.source_type === 'GITHUB' ? 'Remote Git' : 'Local Source',
     source: sourceLabel(scan),
     status,

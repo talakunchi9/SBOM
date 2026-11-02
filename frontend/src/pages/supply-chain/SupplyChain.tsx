@@ -63,7 +63,7 @@ export const SupplyChain: React.FC = () => {
     // 2. Transitive CVEs
     vulnerabilities.forEach((v) => {
       const matchingComp = components.find(c => c.name.toLowerCase() === v.package.toLowerCase());
-      const isTransitive = matchingComp ? (matchingComp.dependencies ?? 0) > 0 : false;
+      const isTransitive = matchingComp ? !matchingComp.directDependency : false;
       if (isTransitive || v.cve) {
         list.push({
           id: `trans-${v.id || v.cve}-${v.package}`,
@@ -106,11 +106,11 @@ export const SupplyChain: React.FC = () => {
 
   // Direct vs Transitive deps from components
   const directDepsCount = useMemo(() => {
-    return components.filter((c) => (c.dependencies ?? 0) === 0 && components.length > 0).length;
+    return components.filter((c) => c.directDependency && components.length > 0).length;
   }, [components]);
 
   const transitiveDepsCount = useMemo(() => {
-    return components.filter((c) => (c.dependencies ?? 0) > 0).length;
+    return components.filter((c) => !c.directDependency).length;
   }, [components]);
 
   const catalogSize = components.length;

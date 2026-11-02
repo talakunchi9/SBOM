@@ -320,6 +320,24 @@ export const UploadInventoryModal: React.FC<UploadInventoryModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (!projectName || !projectName.trim()) {
+      addToast({
+        type: 'warning',
+        title: 'Project Name Required',
+        message: 'Please specify the Project Name before uploading.',
+      });
+      return;
+    }
+
+    if (!projectApplication || !projectApplication.trim()) {
+      addToast({
+        type: 'warning',
+        title: 'Application Required',
+        message: 'Please specify the Application / Service name before uploading.',
+      });
+      return;
+    }
+
     if (!displayName && !selectedFile && selectedFolderFiles.length === 0) {
       addToast({
         type: 'warning',
@@ -734,6 +752,36 @@ export const UploadInventoryModal: React.FC<UploadInventoryModalProps> = ({
 
         {/* Modal Body Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+          {/* Project & Application Inputs (Mandatory Fields) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50/70 dark:bg-gray-800/40 p-3.5 rounded-xl border border-gray-200/80 dark:border-gray-700/80 text-xs">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
+                Project Name <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={projectName}
+                onChange={(e) => setProjectName(e.target.value)}
+                placeholder="e.g. payments-api, core-banking"
+                className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
+                Project Application / Service <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                required
+                value={projectApplication}
+                onChange={(e) => setProjectApplication(e.target.value)}
+                placeholder="e.g. backend-api, auth-service"
+                className="w-full px-2.5 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-2xs"
+              />
+            </div>
+          </div>
+
           {/* Upload Dropzone Area */}
           <div className="space-y-3">
             {/* Dashed Dropzone Box */}

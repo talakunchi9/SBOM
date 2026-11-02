@@ -110,7 +110,7 @@ export const Dashboard: React.FC = () => {
       ? projects
       : projects.filter((p) => p.id === selectedProject);
     const total = targetProjects.reduce((acc, p) => acc + (p.criticalCount || 0) + (p.highCount || 0), 0);
-    return new Set(Array.from({ length: total }, (_, i) => `CVE-${i}`));
+    return new Set<string>();
   }, [filteredVulnerabilities, selectedProject, projects]);
 
   // Vulnerable libraries: components that have cves > 0 or risk not safe
@@ -303,7 +303,7 @@ export const Dashboard: React.FC = () => {
       const projScans = scansHistory.filter(
         (s) =>
           (s.targetProject?.toLowerCase() === p.name.toLowerCase() ||
-           s.targetProject?.toLowerCase() === p.id.toLowerCase()) &&
+            s.targetProject?.toLowerCase() === p.id.toLowerCase()) &&
           !s.isBulkAggregate
       );
       const projVulns = vulnerabilities.filter(
@@ -319,12 +319,12 @@ export const Dashboard: React.FC = () => {
       const lastScan = projScans
         .filter((s) => s.status === 'completed')
         .sort((a, b) => (b.completedAt || b.timestamp || '').localeCompare(a.completedAt || a.timestamp || ''))
-        [0];
+      [0];
       const lastScanDate = lastScan
         ? new Date(lastScan.completedAt || lastScan.timestamp?.replace(' ', 'T') || '').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
         : p.lastScanned
-        ? new Date(p.lastScanned).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-        : 'Never';
+          ? new Date(p.lastScanned).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+          : 'Never';
       return {
         id: p.id,
         name: p.name,
@@ -417,7 +417,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Time range selector */}
-            <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 text-xs font-semibold">
+            {/* <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5 text-xs font-semibold">
               {(['7D', '30D', '90D'] as const).map((t) => (
                 <button
                   key={t}
@@ -432,7 +432,7 @@ export const Dashboard: React.FC = () => {
                   {t}
                 </button>
               ))}
-            </div>
+            </div> */}
 
             <button
               onClick={() => navigate('/security-scans/new')}
@@ -448,7 +448,7 @@ export const Dashboard: React.FC = () => {
       {/* 2. Enterprise Cybersecurity KPI Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* Card 1: Overall Risk Gauge - Elevated visual importance */}
-        <div className="col-span-2 sm:col-span-1 lg:col-span-1 bg-white dark:bg-[#162238] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-colors hover:border-[#CBD5E1] dark:hover:border-[#334460]">
+        <div onClick={() => navigate('/vulnerabilities')} className="col-span-2 sm:col-span-1 lg:col-span-1 bg-white dark:bg-[#162238] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
           {/* Subtle 2.5px top accent indicator */}
           <div className="absolute top-0 left-0 right-0 h-[2.5px]" style={{ backgroundColor: riskAccentColor }} />
 
@@ -508,7 +508,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 2: Total Projects */}
-        <div className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-colors hover:border-[#CBD5E1] dark:hover:border-[#334460]">
+        <div onClick={() => navigate('/software-inventory/projects')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
           {/* Subtle 2.5px top accent indicator (SQUAD1 Blue #2563EB) */}
           <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#2563EB]" />
 
@@ -533,7 +533,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 3: Total Scans */}
-        <div className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-colors hover:border-[#CBD5E1] dark:border-[#334460]">
+        <div onClick={() => navigate('/security-scans')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:border-[#334460] cursor-pointer hover:shadow-md">
           {/* Subtle 2.5px top accent indicator (SQUAD1 Blue #2563EB) */}
           <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#2563EB]" />
 
@@ -558,7 +558,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 4: Vulnerable Libraries */}
-        <div className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-colors hover:border-[#CBD5E1] dark:hover:border-[#334460]">
+        <div onClick={() => navigate('/software-inventory')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
           {/* Subtle 2.5px top accent indicator (Amber #D97706) */}
           <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#D97706]" />
 
@@ -583,7 +583,7 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 5: Unique CVEs */}
-        <div className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-colors hover:border-[#CBD5E1] dark:hover:border-[#334460]">
+        <div onClick={() => navigate('/vulnerabilities')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
           {/* Subtle 2.5px top accent indicator (Red #DC2626) */}
           <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#DC2626]" />
 
@@ -615,9 +615,9 @@ export const Dashboard: React.FC = () => {
             <h3 className="text-sm font-bold text-gray-900 dark:text-white">Threat Severity Breakdown</h3>
             <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Critical, High, Medium, and Low distribution of Common Vulnerabilities and Exposures</p>
           </div>
-          <span className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40">
+          {/* <span className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40">
             {timeRange === '7D' ? 'Last 7 Days' : timeRange === '30D' ? 'Last 30 Days' : 'Last 90 Days'}
-          </span>
+          </span> */}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center pt-4">
@@ -758,7 +758,7 @@ export const Dashboard: React.FC = () => {
                 top5VulnerableProjects.map((proj, idx) => (
                   <div
                     key={proj.id}
-                    onClick={() => navigate('/software-inventory/projects')}
+                    onClick={() => navigate(`/software-inventory/projects?q=${encodeURIComponent(proj.name)}`)}
                     className="flex items-center justify-between py-1.5 px-2.5 rounded-lg border border-gray-100 dark:border-gray-800 hover:bg-gray-50/70 dark:hover:bg-gray-800/40 cursor-pointer transition-colors text-xs"
                   >
                     <div className="flex items-center gap-2">

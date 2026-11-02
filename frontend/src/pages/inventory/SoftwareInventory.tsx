@@ -1318,6 +1318,14 @@ export const SoftwareInventory: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
+                  if (!manifestContent.trim() && !manifestFileName) {
+                    addToast({
+                      type: 'warning',
+                      title: 'Manifest Required',
+                      message: 'Please paste manifest content or choose a manifest file before ingesting.',
+                    });
+                    return;
+                  }
                   setIngestModalOpen(false);
                   addToast({
                     type: 'success',

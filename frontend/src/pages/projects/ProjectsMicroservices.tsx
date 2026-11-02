@@ -310,8 +310,13 @@ export const ProjectsMicroservices: React.FC = () => {
             {projectsList.length > 0 ? (
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                 {paginatedProjects.map((p) => {
-                  const projectComps = (components || []).filter((c) => (c.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
-                  const compCount = p.component_count || (projectComps.length > 0 ? projectComps.length : p.scans);
+                  const projectComps = (components || []).filter((c) => {
+                    const compProj = (c.project || '').toLowerCase().trim();
+                    const compApp = (c.projectApplication || '').toLowerCase().trim();
+                    const pName = p.name.toLowerCase().trim();
+                    return compProj === pName || compApp === pName;
+                  });
+                  const compCount = projectComps.length;
                   const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
                   const vulnCount = p.vulns > 0 ? p.vulns : projectVulns.length;
 
@@ -444,8 +449,13 @@ export const ProjectsMicroservices: React.FC = () => {
       {/* Project Details Modal */}
       {selectedProjectModal && (() => {
         const p = selectedProjectModal;
-        const projectComps = (components || []).filter((c) => (c.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
-        const compCount = p.component_count || (projectComps.length > 0 ? projectComps.length : p.scans);
+        const projectComps = (components || []).filter((c) => {
+          const compProj = (c.project || '').toLowerCase().trim();
+          const compApp = (c.projectApplication || '').toLowerCase().trim();
+          const pName = p.name.toLowerCase().trim();
+          return compProj === pName || compApp === pName;
+        });
+        const compCount = projectComps.length;
         const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
         const vulnCount = p.vulns > 0 ? p.vulns : projectVulns.length;
 

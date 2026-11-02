@@ -138,6 +138,7 @@ interface AppStateContextType {
     projectId?: string;
     applicationId?: string;
     releaseTag?: string;
+    description?: string;
     scanType: 'Local Source' | 'Remote Git' | 'Batch Multi-Project' | 'Bulk Scan';
     source: string;
     localFile?: File | null;
@@ -437,6 +438,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     projectId?: string;
     applicationId?: string;
     releaseTag?: string;
+    description?: string;
     scanType: 'Local Source' | 'Remote Git' | 'Batch Multi-Project' | 'Bulk Scan';
     source: string;
     localFile?: File | null;
@@ -466,6 +468,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         params.appService,
         params.releaseTag || 'UNKNOWN',
         { projectId: params.projectId, applicationId: params.applicationId },
+        params.description,
       );
       createdId = created.scan_id;
       createdStatus = created.status || createdStatus;
@@ -485,6 +488,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         credentialId,
         projectId: params.projectId,
         applicationId: params.applicationId,
+        description: params.description,
       });
       createdId = created.scan_id;
       createdStatus = created.status || createdStatus;
@@ -539,7 +543,10 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       id: createdId,
       targetProject: params.projectName,
       appService: params.appService,
-      releaseTag: params.releaseTag || 'UNKNOWN',
+      releaseTag: params.releaseTag || 'v1.0.0',
+      createdBy: 'Asha Mehta',
+      requestedBy: 'Asha Mehta',
+      description: params.description || '',
       scanType: params.scanType,
       source: params.source,
       status: api.mapStatus(createdStatus, createdStage),
@@ -577,6 +584,9 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       lows: 0,
       snapshotId: undefined,
       logMessages: ['Rescan queued'],
+      createdBy: 'Asha Mehta',
+      requestedBy: 'Asha Mehta',
+      description: job.description || '',
       timestamp: api.formatLocalTimestamp(new Date().toISOString()),
     };
     announced.current.delete(created.scan_id);
@@ -920,28 +930,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const ticketId = extra?.ticketId || target?.ticketId || '';
     const owner = extra?.owner || target?.owner || '';
 
-    setVulnerabilities((prev) =>
-      prev.map((v) =>
-        v.id === idOrCve || v.cve.toUpperCase() === cve.toUpperCase()
-          ? {
-              ...v,
-              status,
-              ...(vexStatus ? { vexStatus } : {}),
-              ...(ticketId ? { ticketId } : {}),
-              ...(owner ? { owner } : {}),
-            }
-          : v
-      )
-    );
-
-    try {
-      const stored = JSON.parse(localStorage.getItem('vuln_triage_overrides') || '{}');
-      stored[cve.toUpperCase()] = { status, vexStatus, project, application, justification, ticketId, owner };
-      localStorage.setItem('vuln_triage_overrides', JSON.stringify(stored));
-    } catch {
-      // ignore
-    }
-
     try {
       await api.updateVulnerabilityStatus(cve, {
         status,
@@ -952,17 +940,33 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ticketId,
         owner,
       });
+
+      setVulnerabilities((prev) =>
+        prev.map((v) =>
+          v.id === idOrCve || v.cve.toUpperCase() === cve.toUpperCase()
+            ? {
+                ...v,
+                status,
+                ...(vexStatus ? { vexStatus } : {}),
+                ...(ticketId ? { ticketId } : {}),
+                ...(owner ? { owner } : {}),
+              }
+            : v
+        )
+      );
+
       addToast({
         type: 'success',
         title: 'Status Saved to Database',
         message: `${cve} status permanently saved as "${status}".`,
       });
-    } catch {
+    } catch (err: any) {
       addToast({
-        type: 'info',
-        title: 'Vulnerability Updated',
-        message: `Status updated to "${status}".`,
+        type: 'error',
+        title: 'Triage Update Failed',
+        message: err?.message || `Failed to persist ${cve} status update to the database.`,
       });
+      throw err;
     }
   };
 

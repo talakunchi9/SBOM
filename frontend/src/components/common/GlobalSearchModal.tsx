@@ -107,7 +107,7 @@ export const GlobalSearchModal: React.FC = () => {
                     onClick={() => {
                       setSelectedVulnerability(v);
                       setSearchModalOpen(false);
-                      navigate('/vulnerabilities');
+                      navigate(`/vulnerabilities/${encodeURIComponent(v.cve)}`);
                     }}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >
@@ -145,7 +145,7 @@ export const GlobalSearchModal: React.FC = () => {
                     key={c.id}
                     onClick={() => {
                       setSearchModalOpen(false);
-                      navigate('/software-inventory');
+                      navigate(`/software-inventory?search=${encodeURIComponent(c.name)}`);
                     }}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >
@@ -183,7 +183,7 @@ export const GlobalSearchModal: React.FC = () => {
                     key={p.id}
                     onClick={() => {
                       setSearchModalOpen(false);
-                      navigate('/dashboard');
+                      navigate(`/software-inventory/projects?q=${encodeURIComponent(p.name)}`);
                     }}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >

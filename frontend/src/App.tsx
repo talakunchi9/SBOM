@@ -14,6 +14,7 @@ import { ExportCenter } from './pages/export';
 import { SupplyChain } from './pages/supply-chain';
 import { Monitoring, Integrations } from './pages/monitoring';
 import { Profile, Users, Settings } from './pages/settings';
+import { NotFound } from './pages/common/NotFound';
 
 export const App: React.FC = () => {
   return (
@@ -46,7 +47,7 @@ export const App: React.FC = () => {
               <Route path="/users" element={<Users />} />
               <Route path="/settings" element={<Settings />} />
 
-              <Route path="*" element={<Navigate to="/dashboard" replace />} />
+              <Route path="*" element={<NotFound />} />
             </Routes>
           </Layout>
         </BrowserRouter>

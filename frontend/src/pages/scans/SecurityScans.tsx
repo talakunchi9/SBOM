@@ -15,6 +15,7 @@ import {
   Play,
   Ban,
   RotateCcw,
+  RefreshCw,
   Clock,
   Calendar,
   History,
@@ -139,7 +140,7 @@ export const SecurityScans: React.FC = () => {
   const [selectedApplication, setSelectedApplication] = useState<CatalogRecord | null>(null);
   const projectName = selectedProject?.name || '';
   const appService = selectedApplication?.name || '';
-  const [releaseVersion, setReleaseVersion] = useState('');
+  const [releaseVersion, setReleaseVersion] = useState('v1.0.0');
   const [description, setDescription] = useState('');
 
   // Source Type: 'local' | 'git' | 'bulk'
@@ -491,7 +492,7 @@ export const SecurityScans: React.FC = () => {
     setNewScanStep('input');
     setSelectedProject(null);
     setSelectedApplication(null);
-    setReleaseVersion('');
+    setReleaseVersion('v1.0.0');
     setDescription('');
     setSourceType('local');
     setSelectedFolder('');
@@ -608,6 +609,10 @@ export const SecurityScans: React.FC = () => {
       }
       if (!selectedApplication?.id) {
         addToast({ type: 'warning', title: 'Validation Error', message: 'Application / Service is required.' });
+        return;
+      }
+      if (!releaseVersion || !releaseVersion.trim()) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Release / Version is required (e.g. v1.0.0).' });
         return;
       }
     }
@@ -739,6 +744,7 @@ export const SecurityScans: React.FC = () => {
         releaseTag: sourceType === 'bulk' ? (releaseVersion.trim() || firstBulk?.version || '') : releaseVersion,
         scanType: sourceType === 'local' ? 'Local Source' : sourceType === 'git' ? 'Remote Git' : 'Bulk Scan',
         source: sourceDesc,
+        description: description.trim(),
         localFile,
         localFolder,
         bulkFile: bulkFileToSend,
@@ -789,6 +795,10 @@ export const SecurityScans: React.FC = () => {
   const selectedHistoryScan = scansHistory.find((scan) => scan.id === selectedScanId) || null;
   const [rescanningId, setRescanningId] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [rescanTargetJob, setRescanTargetJob] = useState<ScanJob | null>(null);
+  const [rescanSourceChoice, setRescanSourceChoice] = useState<'previous' | 'new_file'>('previous');
+  const [rescanNewFile, setRescanNewFile] = useState<File | null>(null);
+  const rescanFileInputRef = useRef<HTMLInputElement>(null);
 
   const canRescan = (status: string) => status === 'completed' || status === 'failed' || status === 'cancelled';
   const canCancel = (status: string) => {
@@ -824,21 +834,69 @@ export const SecurityScans: React.FC = () => {
     }
   };
 
-  const handleRescan = async (job: ScanJob) => {
-    if (rescanningId) return;
-    setRescanningId(job.id);
-    try {
-      await rescanScan(job);
-      setSelectedScanId(null);
-      setTab('live');
-    } catch (err) {
-      addToast({
-        type: 'error',
-        title: 'Rescan failed',
-        message: err instanceof Error ? err.message : 'The scan could not be queued again.',
-      });
-    } finally {
-      setRescanningId(null);
+  const handleRescan = (job: ScanJob) => {
+    setRescanTargetJob(job);
+    setRescanSourceChoice('previous');
+    setRescanNewFile(null);
+  };
+
+  const executeRescan = async () => {
+    if (!rescanTargetJob || rescanningId) return;
+
+    if (rescanSourceChoice === 'new_file') {
+      if (!rescanNewFile) {
+        addToast({
+          type: 'warning',
+          title: 'File Required',
+          message: 'Please choose a new manifest or archive file to scan.',
+        });
+        return;
+      }
+      setRescanningId(rescanTargetJob.id);
+      try {
+        const scanId = await startScan({
+          projectName: rescanTargetJob.targetProject,
+          appService: rescanTargetJob.appService || '',
+          releaseTag: rescanTargetJob.releaseTag || 'v1.0.0',
+          scanType: 'Local Source',
+          source: rescanNewFile.name,
+          localFile: rescanNewFile,
+        });
+        setRescanTargetJob(null);
+        setSelectedScanId(null);
+        if (scanId) {
+          setTab('live');
+        }
+        addToast({
+          type: 'success',
+          title: 'Rescan Started',
+          message: `Rescanning ${rescanTargetJob.targetProject} with new file: ${rescanNewFile.name}.`,
+        });
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Rescan failed',
+          message: err instanceof Error ? err.message : 'The scan could not be queued.',
+        });
+      } finally {
+        setRescanningId(null);
+      }
+    } else {
+      setRescanningId(rescanTargetJob.id);
+      try {
+        await rescanScan(rescanTargetJob);
+        setRescanTargetJob(null);
+        setSelectedScanId(null);
+        setTab('live');
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Rescan failed',
+          message: err instanceof Error ? err.message : 'The scan could not be queued again.',
+        });
+      } finally {
+        setRescanningId(null);
+      }
     }
   };
 
@@ -1113,7 +1171,7 @@ export const SecurityScans: React.FC = () => {
                               <User className="w-3 h-3" />
                             </div>
                             <span className="text-gray-700 dark:text-gray-300 font-medium text-xs">
-                              {(s as any).requestedBy || 'SecOps Admin'}
+                              {(s as any).requestedBy || (s as any).createdBy || 'Asha Mehta'}
                             </span>
                           </div>
                         </td>
@@ -1249,11 +1307,25 @@ export const SecurityScans: React.FC = () => {
                       type="text"
                       value={releaseVersion}
                       onChange={(e) => setReleaseVersion(e.target.value)}
-                      placeholder="e.g. v3.2.0"
+                      placeholder="e.g. v1.0.0"
                       className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
                     />
                     <p className="text-[10px] text-gray-400 mt-1">Application version or release tag.</p>
                   </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                  <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    DESCRIPTION / AUDIT PURPOSE
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Enter scan description or audit context (e.g. Sprint 24 release audit, compliance review)..."
+                    className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 resize-none"
+                  />
+                  <p className="text-[10px] text-gray-400 mt-0.5">Optional context or audit notes for this security scan.</p>
                 </div>
               </div>
 
@@ -2089,7 +2161,7 @@ export const SecurityScans: React.FC = () => {
                           </div>
                           <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                             <span className="text-gray-500 block mb-1">Description:</span>
-                            <p className="text-gray-700 dark:text-gray-300 italic">{description}</p>
+                            <p className="text-gray-700 dark:text-gray-300 italic">{description || 'No description provided'}</p>
                           </div>
                         </>
                       )}
@@ -2625,7 +2697,7 @@ export const SecurityScans: React.FC = () => {
                       </td>
                       <td className="py-3 text-gray-500 dark:text-gray-400">{job.timestamp}</td>
                       <td className="py-3 text-gray-700 dark:text-gray-300 font-medium">
-                        {(job as any).requestedBy || (job as any).createdBy || 'SecOps Admin'}
+                        {(job as any).requestedBy || (job as any).createdBy || 'Asha Mehta'}
                       </td>
                       <td className="py-3 font-semibold text-gray-900 dark:text-white">
                         <button
@@ -3303,6 +3375,163 @@ export const SecurityScans: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Rescan Options Modal (Scenario 10) */}
+      {rescanTargetJob && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/50">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <RefreshCw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                    Rescan Project
+                  </h3>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    {rescanTargetJob.targetProject} {rescanTargetJob.appService ? `(${rescanTargetJob.appService})` : ''}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRescanTargetJob(null)}
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-gray-600 dark:text-gray-300">
+                Choose whether to re-scan the previously uploaded source or provide a new manifest/archive file:
+              </p>
+
+              <div className="space-y-3">
+                {/* Option A: Re-scan previous source */}
+                <label
+                  onClick={() => setRescanSourceChoice('previous')}
+                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${
+                    rescanSourceChoice === 'previous'
+                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
+                      : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="rescan_choice"
+                    checked={rescanSourceChoice === 'previous'}
+                    onChange={() => setRescanSourceChoice('previous')}
+                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-900 dark:text-white">
+                      Re-scan Previously Uploaded Source
+                    </p>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                      Source: {rescanTargetJob.source || 'Original scan source'}
+                    </p>
+                  </div>
+                </label>
+
+                {/* Option B: Upload new file */}
+                <label
+                  onClick={() => setRescanSourceChoice('new_file')}
+                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${
+                    rescanSourceChoice === 'new_file'
+                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
+                      : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="rescan_choice"
+                    checked={rescanSourceChoice === 'new_file'}
+                    onChange={() => setRescanSourceChoice('new_file')}
+                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-900 dark:text-white">
+                      Upload a New File / Source
+                    </p>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
+                      Upload an updated manifest (pom.xml, package.json, requirements.txt) or archive (.zip, .spdx, .json)
+                    </p>
+
+                    {rescanSourceChoice === 'new_file' && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
+                        <input
+                          ref={rescanFileInputRef}
+                          type="file"
+                          accept=".json,.xml,.spdx,.txt,.lock,.zip,.tar,.gz,pom.xml,package.json,requirements.txt"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setRescanNewFile(file);
+                            }
+                          }}
+                          className="hidden"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => rescanFileInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer"
+                          >
+                            <Upload className="w-3.5 h-3.5" />
+                            {rescanNewFile ? 'Change File' : 'Choose New File'}
+                          </button>
+                          {rescanNewFile ? (
+                            <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium truncate">
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span className="truncate">{rescanNewFile.name}</span>
+                              <span className="text-[10px] text-gray-400">({(rescanNewFile.size / 1024).toFixed(1)} KB)</span>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                              * Select a file to proceed
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/50">
+              <button
+                type="button"
+                onClick={() => setRescanTargetJob(null)}
+                className="px-3.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={rescanningId === rescanTargetJob.id || (rescanSourceChoice === 'new_file' && !rescanNewFile)}
+                onClick={executeRescan}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold cursor-pointer shadow-sm shadow-blue-500/20"
+              >
+                {rescanningId === rescanTargetJob.id ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Starting Rescan...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    Start Rescan
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

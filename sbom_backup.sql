@@ -365,6 +365,7 @@ CREATE TABLE public.sboms (
     catalog_application_id text,
     bom_type text NOT NULL,
     application_version text DEFAULT ''::text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
     version_strategy text DEFAULT ''::text NOT NULL,
     repository_url text DEFAULT ''::text NOT NULL,
     repository_branch text DEFAULT ''::text NOT NULL,

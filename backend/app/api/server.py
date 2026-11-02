@@ -142,6 +142,7 @@ def build(cfg: Config | None = None) -> FastAPI:
         project_id: str = Form(default=""),
         application_id: str = Form(default=""),
         version: str = Form(default=""),
+        description: str = Form(default=""),
     ):
         length = request.headers.get("content-length")
         if length and int(length) > cfg.max_upload_bytes:
@@ -228,6 +229,7 @@ def build(cfg: Config | None = None) -> FastAPI:
                     "application_id": application_name,
                     "application_name": application_name,
                     "application_version": app_version,
+                    "description": description,
                     "version_strategy": strategy,
                     "bom_type": "SBOM",
                     "source_type": "LOCAL",
@@ -282,6 +284,7 @@ def build(cfg: Config | None = None) -> FastAPI:
                     "application_id": application_name,
                     "application_name": application_name,
                     "application_version": version,
+                    "description": body.get("description") or "",
                     "version_strategy": strategy,
                     "bom_type": "SBOM",
                     "source_type": "GITHUB",

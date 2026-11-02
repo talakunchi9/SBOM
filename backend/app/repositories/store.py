@@ -81,15 +81,15 @@ class ScanRepo:
                id, organization_id, project_id, application_id, application_name,
                application_version, version_strategy, bom_type, source_type, scan_status,
                scan_stage, idempotency_key, created_at, bulk_scan_id, bulk_row_number,
-               catalog_project_id, catalog_application_id, repository_url, branch)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               catalog_project_id, catalog_application_id, repository_url, branch, description)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 scan["id"], scan["organization_id"], scan["project_id"], scan["application_id"],
                 scan["application_name"], scan["application_version"], scan["version_strategy"],
                 scan["bom_type"], scan["source_type"], scan["status"], scan["stage"],
                 scan["idempotency_key"], iso(scan["created_at"]), scan.get("bulk_scan_id") or None,
                 scan.get("bulk_row") or 0, catalog_project_id, catalog_application_id,
-                scan.get("repository_url") or "", scan.get("branch") or "",
+                scan.get("repository_url") or "", scan.get("branch") or "", scan.get("description") or "",
             ),
         )
         finish(self.db)
@@ -100,7 +100,7 @@ class ScanRepo:
                       application_version, version_strategy, bom_type, source_type, scan_status,
                       scan_stage, error_code, error_message, idempotency_key, created_at,
                       started_at, completed_at, COALESCE(bulk_scan_id,''), bulk_row_number,
-                      COALESCE(sbom_id,'')
+                      COALESCE(sbom_id,''), COALESCE(description,'')
                FROM scans WHERE id = ?""",
             (scan_id,),
         ).fetchone()
@@ -112,7 +112,7 @@ class ScanRepo:
                       application_version, version_strategy, bom_type, source_type, scan_status,
                       scan_stage, error_code, error_message, idempotency_key, created_at,
                       started_at, completed_at, COALESCE(bulk_scan_id,''), bulk_row_number,
-                      COALESCE(sbom_id,'')
+                      COALESCE(sbom_id,''), COALESCE(description,'')
                FROM scans WHERE idempotency_key = ?""",
             (key,),
         ).fetchone()
@@ -126,7 +126,7 @@ class ScanRepo:
                       application_version, version_strategy, bom_type, source_type, scan_status,
                       scan_stage, error_code, error_message, idempotency_key, created_at,
                       started_at, completed_at, COALESCE(bulk_scan_id,''), bulk_row_number,
-                      COALESCE(sbom_id,'')
+                      COALESCE(sbom_id,''), COALESCE(description,'')
                FROM scans WHERE organization_id = ? AND scan_status <> 'IGNORED' ORDER BY created_at DESC LIMIT ?""",
             (org_id, limit),
         ).fetchall()
@@ -255,6 +255,7 @@ def _scan_row(row) -> dict[str, Any]:
         "bulk_scan_id": row[17] or "",
         "bulk_row": row[18] or 0,
         "snapshot_id": row[19] or "",
+        "description": row[20] if len(row) > 20 and row[20] is not None else "",
     }
     return scan
 
@@ -282,6 +283,7 @@ def public_scan(scan: dict[str, Any]) -> dict[str, Any]:
             "bulk_scan_id": scan.get("bulk_scan_id") or None,
             "bulk_row": scan.get("bulk_row") or None,
             "snapshot_id": scan.get("snapshot_id") or None,
+            "description": scan.get("description") or None,
             "file_name": scan.get("file_name") or None,
             "repository_url": scan.get("repository_url") or None,
             "branch": scan.get("branch") or None,
