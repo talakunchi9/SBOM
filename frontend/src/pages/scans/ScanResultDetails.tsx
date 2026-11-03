@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -315,8 +316,8 @@ export const ScanResultDetails: React.FC<ScanResultDetailsProps> = ({
     navigate(`/vulnerabilities?${params.toString()}`);
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn">
       <div className="bg-white dark:bg-[#111827] rounded-xl max-w-4xl w-full max-h-[88vh] overflow-y-auto p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
         <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100 dark:border-gray-800">
           <div className="min-w-0">
@@ -452,7 +453,8 @@ export const ScanResultDetails: React.FC<ScanResultDetailsProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -647,15 +649,14 @@ const SingleResults: React.FC<{
                         <ExternalLink className="w-3 h-3 text-gray-400 group-hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                       </span>
                       <span
-                        className={`text-[11px] font-bold ${
-                          vuln.severity === 'Critical'
-                            ? 'text-red-600 dark:text-red-400'
-                            : vuln.severity === 'High'
+                        className={`text-[11px] font-bold ${vuln.severity === 'Critical'
+                          ? 'text-red-600 dark:text-red-400'
+                          : vuln.severity === 'High'
                             ? 'text-orange-500 dark:text-orange-400'
                             : vuln.severity === 'Medium'
-                            ? 'text-amber-500 dark:text-amber-400'
-                            : 'text-sky-500 dark:text-sky-400'
-                        }`}
+                              ? 'text-amber-500 dark:text-amber-400'
+                              : 'text-sky-500 dark:text-sky-400'
+                          }`}
                       >
                         {vuln.severity}
                       </span>
