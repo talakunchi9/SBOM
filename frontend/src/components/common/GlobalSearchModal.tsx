@@ -4,6 +4,11 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Package, ShieldAlert, FolderKanban, FileCode, X, ArrowRight } from 'lucide-react';
 import { SeverityBadge, EcosystemBadge } from './Badge';
 
+type SearchResult =
+  | { type: 'vulnerability'; cve: string }
+  | { type: 'component'; name: string; project: string }
+  | { type: 'project'; name: string };
+
 export const GlobalSearchModal: React.FC = () => {
   const { searchModalOpen, setSearchModalOpen, searchQuery, setSearchQuery, components, vulnerabilities, projects, setSelectedVulnerability } = useAppState();
   const [localQuery, setLocalQuery] = useState(searchQuery);
@@ -48,6 +53,21 @@ export const GlobalSearchModal: React.FC = () => {
   );
 
   const totalResults = matchedProjects.length + matchedVulnerabilities.length + matchedComponents.length;
+
+  const handleResultClick = (result: SearchResult) => {
+    switch (result.type) {
+      case 'vulnerability':
+        return;
+      case 'component':
+        navigate(`/software-inventory?q=${encodeURIComponent(result.name)}&project=${encodeURIComponent(result.project)}`);
+        break;
+      case 'project':
+        navigate(`/software-inventory/projects?q=${encodeURIComponent(result.name)}`);
+        break;
+    }
+
+    setSearchModalOpen(false);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
@@ -106,8 +126,7 @@ export const GlobalSearchModal: React.FC = () => {
                     key={v.id}
                     onClick={() => {
                       setSelectedVulnerability(v);
-                      setSearchModalOpen(false);
-                      navigate(`/vulnerabilities/${encodeURIComponent(v.cve)}`);
+                      handleResultClick({ type: 'vulnerability', cve: v.cve });
                     }}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >
@@ -143,10 +162,11 @@ export const GlobalSearchModal: React.FC = () => {
                 {matchedComponents.slice(0, 4).map(c => (
                   <div
                     key={c.id}
-                    onClick={() => {
-                      setSearchModalOpen(false);
-                      navigate(`/software-inventory?search=${encodeURIComponent(c.name)}`);
-                    }}
+                    onClick={() => handleResultClick({
+                      type: 'component',
+                      name: c.name,
+                      project: c.project,
+                    })}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >
                     <div className="flex items-center gap-3">
@@ -181,10 +201,7 @@ export const GlobalSearchModal: React.FC = () => {
                 {matchedProjects.slice(0, 3).map(p => (
                   <div
                     key={p.id}
-                    onClick={() => {
-                      setSearchModalOpen(false);
-                      navigate(`/software-inventory/projects?q=${encodeURIComponent(p.name)}`);
-                    }}
+                    onClick={() => handleResultClick({ type: 'project', name: p.name })}
                     className="flex items-center justify-between p-2.5 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800/80 cursor-pointer border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors"
                   >
                     <div className="flex items-center gap-3">

@@ -148,9 +148,9 @@ export const TopHeader: React.FC<TopHeaderProps> = () => {
             aria-label="Notifications"
           >
             <Bell className="w-4.5 h-4.5" />
-            <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-blue-600 text-white text-[9.5px] font-black flex items-center justify-center ring-2 ring-white dark:ring-gray-900 shadow-xs">
+            {/* <span className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-blue-600 text-white text-[9.5px] font-black flex items-center justify-center ring-2 ring-white dark:ring-gray-900 shadow-xs">
               3
-            </span>
+            </span> */}
           </button>
           <NotificationPanel />
         </div>
