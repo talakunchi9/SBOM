@@ -1378,13 +1378,12 @@ export const SecurityScans: React.FC = () => {
                         acceptLocalDrop(e.dataTransfer);
                       }
                     }}
-                    className={`relative rounded-xl p-4 border transition-all cursor-pointer flex flex-col justify-between ${
-                      isDraggingOverCard
-                        ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 ring-2 ring-blue-500/50 shadow-md'
-                        : sourceType === 'local'
+                    className={`relative rounded-xl p-4 border transition-all cursor-pointer flex flex-col justify-between ${isDraggingOverCard
+                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 ring-2 ring-blue-500/50 shadow-md'
+                      : sourceType === 'local'
                         ? 'border-sky-500 bg-sky-50/30 dark:bg-sky-950/20 shadow-xs ring-1 ring-sky-500/30'
                         : 'border-gray-200 dark:border-gray-800 hover:border-gray-300'
-                    }`}
+                      }`}
                   >
                     <div className="flex items-start justify-between">
                       <div className="w-9 h-9 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 flex items-center justify-center">
@@ -1949,7 +1948,7 @@ export const SecurityScans: React.FC = () => {
                           </div>
 
                           {/* Selected File Card & Verification Status */}
-                          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                          {/* <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                             <div className="flex items-center gap-3">
                               <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 border border-emerald-200 dark:border-emerald-800/50 flex items-center justify-center shrink-0">
                                 <FileSpreadsheet className="w-5 h-5" />
@@ -1981,7 +1980,7 @@ export const SecurityScans: React.FC = () => {
                                 Replace File
                               </button>
                             </div>
-                          </div>
+                          </div> */}
 
                           {/* Parsed Projects Matrix Table Preview */}
                           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-2xs">
@@ -2311,10 +2310,10 @@ export const SecurityScans: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100 dark:border-gray-800">
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${scanFailed
-                      ? 'bg-red-50 dark:bg-red-950/40 text-red-600'
-                      : activeScan.status === 'completed'
-                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600'
-                        : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600'
+                    ? 'bg-red-50 dark:bg-red-950/40 text-red-600'
+                    : activeScan.status === 'completed'
+                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600'
+                      : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600'
                     }`}>
                     {scanFailed ? <AlertTriangle className="w-5 h-5" /> : activeScan.status === 'completed' ? <CheckCircle2 className="w-5 h-5" /> : <Radio className={`w-5 h-5 ${isOpenStatus(activeScan.status) ? 'animate-pulse' : ''}`} />}
                   </div>
@@ -2327,12 +2326,12 @@ export const SecurityScans: React.FC = () => {
                         {activeScan.id}
                       </span>
                       <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${scanFailed
-                          ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
-                          : activeScan.status === 'completed'
-                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                            : activeScan.status === 'cancelled'
-                              ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                              : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
+                        ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
+                        : activeScan.status === 'completed'
+                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : activeScan.status === 'cancelled'
+                            ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                            : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
                         }`}>
                         {displayStatus(activeScan.status)}
                       </span>
@@ -3094,11 +3093,10 @@ export const SecurityScans: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setLocalModalTab('files')}
-                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${
-                    localModalTab === 'files'
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-                  }`}
+                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${localModalTab === 'files'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
                 >
                   Upload Files
                   {localModalTab === 'files' && (
@@ -3108,11 +3106,10 @@ export const SecurityScans: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setLocalModalTab('folder')}
-                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${
-                    localModalTab === 'folder'
-                      ? 'text-blue-600 dark:text-blue-400'
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-                  }`}
+                  className={`pb-3 text-sm font-bold transition-all relative cursor-pointer ${localModalTab === 'folder'
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                    }`}
                 >
                   Import Folder
                   {localModalTab === 'folder' && (
@@ -3412,11 +3409,10 @@ export const SecurityScans: React.FC = () => {
                 {/* Option A: Re-scan previous source */}
                 <label
                   onClick={() => setRescanSourceChoice('previous')}
-                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${
-                    rescanSourceChoice === 'previous'
-                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
-                      : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
-                  }`}
+                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${rescanSourceChoice === 'previous'
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
+                    : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
+                    }`}
                 >
                   <input
                     type="radio"
@@ -3438,11 +3434,10 @@ export const SecurityScans: React.FC = () => {
                 {/* Option B: Upload new file */}
                 <label
                   onClick={() => setRescanSourceChoice('new_file')}
-                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${
-                    rescanSourceChoice === 'new_file'
-                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
-                      : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
-                  }`}
+                  className={`flex items-start gap-3 p-3.5 rounded-lg border cursor-pointer transition-all ${rescanSourceChoice === 'new_file'
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20 shadow-2xs'
+                    : 'border-gray-200 dark:border-gray-750 hover:border-gray-300 bg-white dark:bg-gray-850'
+                    }`}
                 >
                   <input
                     type="radio"
