@@ -102,16 +102,72 @@ export const Dashboard: React.FC = () => {
   }, [filteredVulnerabilities, selectedProject, projects]);
 
   // Unique CVEs
+  // const uniqueCveSet = useMemo(() => {
+  //   if (filteredVulnerabilities.length > 0) {
+  //     const set = new Set<string>();
+  //     for (const v of filteredVulnerabilities) {
+  //       if (v?.cve && v.cve.trim()) {
+  //         set.add(v.cve.trim().toUpperCase());
+  //       }
+  //     }
+  //     return set;
+  //   }
+  //   const targetProjects = selectedProject === 'all'
+  //     ? projects
+  //     : projects.filter((p) => p.id === selectedProject);
+  //   const total = targetProjects.reduce((acc, p) => acc + (p.criticalCount || 0) + (p.highCount || 0), 0);
+  //   return new Set<string>();
+  // }, [filteredVulnerabilities, selectedProject, projects]);
+
+  // Unique Critical CVEs (counts unique CVE IDs with Critical severity, excluding duplicates)
+  // const uniqueCriticalCveCount = useMemo(() => {
+  //   if (filteredVulnerabilities.length > 0) {
+  //     const criticalCveSet = new Set<string>();
+  //     for (const v of filteredVulnerabilities) {
+  //       if (!v?.cve || !v.cve.trim()) continue;
+  //       const sev = (v.severity || '').trim().toLowerCase();
+  //       if (sev === 'critical') {
+  //         criticalCveSet.add(v.cve.trim().toUpperCase());
+  //       }
+  //     }
+  //     return criticalCveSet.size;
+  //   }
+  //   const targetProjects = selectedProject === 'all'
+  //     ? projects
+  //     : projects.filter((p) => p.id === selectedProject);
+  //   return targetProjects.reduce((acc, p) => acc + (p.criticalCount || 0), 0);
+  // }, [filteredVulnerabilities, selectedProject, projects]);
+
+  // Unique CVEs
   const uniqueCveSet = useMemo(() => {
-    if (filteredVulnerabilities.length > 0) {
-      return new Set(filteredVulnerabilities.map((v) => v.cve.toUpperCase()));
+    const set = new Set<string>();
+
+    for (const v of filteredVulnerabilities) {
+      if (typeof v?.cve === 'string' && v.cve.trim()) {
+        set.add(v.cve.trim().toUpperCase());
+      }
     }
-    const targetProjects = selectedProject === 'all'
-      ? projects
-      : projects.filter((p) => p.id === selectedProject);
-    const total = targetProjects.reduce((acc, p) => acc + (p.criticalCount || 0) + (p.highCount || 0), 0);
-    return new Set<string>();
-  }, [filteredVulnerabilities, selectedProject, projects]);
+
+    return set;
+  }, [filteredVulnerabilities]);
+
+  // Unique Critical CVEs
+  const uniqueCriticalCveCount = useMemo(() => {
+    const criticalCveSet = new Set<string>();
+
+    for (const v of filteredVulnerabilities) {
+      if (typeof v?.cve !== 'string' || !v.cve.trim()) continue;
+
+      const cveId = v.cve.trim().toUpperCase();
+      const severity = typeof v.severity === 'string' ? v.severity.trim().toLowerCase() : '';
+
+      if (uniqueCveSet.has(cveId) && severity === 'critical') {
+        criticalCveSet.add(cveId);
+      }
+    }
+
+    return criticalCveSet.size;
+  }, [filteredVulnerabilities, uniqueCveSet]);
 
   // Vulnerable libraries: components that have cves > 0 or risk not safe
   const vulnerableLibCount = useMemo(() => {
@@ -448,11 +504,11 @@ export const Dashboard: React.FC = () => {
       {/* 2. Enterprise Cybersecurity KPI Row */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
         {/* Card 1: Overall Risk Gauge - Elevated visual importance */}
-        <div onClick={() => navigate('/vulnerabilities')} className="col-span-2 sm:col-span-1 lg:col-span-1 bg-white dark:bg-[#162238] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
-          {/* Subtle 2.5px top accent indicator */}
-          <div className="absolute top-0 left-0 right-0 h-[2.5px]" style={{ backgroundColor: riskAccentColor }} />
+        {/* <div onClick={() => navigate('/vulnerabilities')} className="col-span-2 sm:col-span-1 lg:col-span-1 bg-white dark:bg-[#162238] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md"> */}
+        {/* Subtle 2.5px top accent indicator */}
+        {/* <div className="absolute top-0 left-0 right-0 h-[2.5px]" style={{ backgroundColor: riskAccentColor }} /> */}
 
-          <div className="flex items-center justify-between gap-1.5">
+        {/* <div className="flex items-center justify-between gap-1.5">
             <div className="flex items-center gap-1.5 min-w-0">
               <ShieldCheck className="w-4 h-4 shrink-0" style={{ color: riskAccentColor }} strokeWidth={2} />
               <span className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#CBD5E1] truncate">
@@ -463,18 +519,18 @@ export const Dashboard: React.FC = () => {
               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: riskAccentColor }} />
               {riskLabel}
             </span>
-          </div>
-
+          </div> */}
+        {/* 
           <div className="flex items-center justify-between gap-2 my-auto pt-1">
             <div className="flex items-baseline gap-1">
               <span className="text-[32px] sm:text-[34px] font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight font-sans leading-none">
                 {overallRiskIndex}
               </span>
               <span className="text-xs font-semibold text-[#94A3B8]">/ 100</span>
-            </div>
+            </div> */}
 
-            {/* Compact Semicircular Visual Risk Gauge */}
-            <div className="flex flex-col items-center shrink-0">
+        {/* Compact Semicircular Visual Risk Gauge */}
+        {/* <div className="flex flex-col items-center shrink-0">
               <svg className="w-11 h-6" viewBox="0 0 44 24" aria-hidden="true">
                 <path
                   d="M 4 22 A 18 18 0 0 1 40 22"
@@ -499,11 +555,123 @@ export const Dashboard: React.FC = () => {
                 {overallRiskIndex}% Risk
               </span>
             </div>
+          </div> */}
+
+        {/* <div className="flex items-center justify-between text-[11px] text-[#475569] dark:text-[#94A3B8] border-t border-[#F1F5F9] dark:border-[#1E293B] pt-2.5">
+            <span className="truncate">{filteredVulnerabilities.filter(v => v.status === 'Open').length} active risk exposure</span>
+            <span className="text-[10px] font-semibold shrink-0" style={{ color: riskAccentColor }}>{riskFooterLabel}</span>
+          </div>
+        </div> */}
+        {/* Card 1: Overall Risk Gauge - Elevated visual importance */}
+        <div
+          onClick={() => navigate('/vulnerabilities')}
+          className="col-span-2 sm:col-span-1 lg:col-span-1 bg-white dark:bg-[#162238] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md"
+        >
+          {/* Subtle 2.5px top accent indicator */}
+          <div
+            className="absolute top-0 left-0 right-0 h-[2.5px]"
+            style={{ backgroundColor: riskAccentColor }}
+          />
+
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <ShieldCheck
+                className="w-4 h-4 shrink-0"
+                style={{ color: riskAccentColor }}
+                strokeWidth={2}
+              />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#CBD5E1] truncate">
+                Overall Risk
+              </span>
+            </div>
+
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${riskBadgeBg} ${riskBadgeText} border ${riskBadgeBorder} shrink-0`}>
+              <span
+                className="w-1.5 h-1.5 rounded-full shrink-0"
+                style={{ backgroundColor: riskAccentColor }}
+              />
+              {riskLabel}
+            </span>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 my-auto pt-1">
+            <div className="flex items-baseline gap-1">
+              <span className="text-[32px] sm:text-[34px] font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight font-sans leading-none">
+                67
+              </span>
+              <span className="text-xs font-semibold text-[#94A3B8]">/ 100</span>
+            </div>
+
+            {/* Compact Semicircular Visual Risk Gauge */}
+            <div className="flex flex-col items-center shrink-0">
+              {(() => {
+                const mockRiskIndex = 67;
+                const radius = 18;
+                const centerX = 22;
+                const centerY = 22;
+
+                // Calculate progress endpoint along the upper semicircle
+                const angle = Math.PI - (mockRiskIndex / 100) * Math.PI;
+
+                const endX = centerX + radius * Math.cos(angle);
+                const endY = centerY - radius * Math.sin(angle);
+
+                return (
+                  <>
+                    <svg
+                      className="w-11 h-6"
+                      viewBox="0 0 44 24"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      {/* Complete grey semicircular track */}
+                      <path
+                        d="M 4 22 A 18 18 0 0 1 40 22"
+                        stroke="#E2E8F0"
+                        className="dark:stroke-[#243247]"
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                      />
+
+                      {/* Red progress arc - 67% */}
+                      <path
+                        d={`M 4 22 A 18 18 0 0 1 ${endX.toFixed(2)} ${endY.toFixed(2)}`}
+                        stroke={riskAccentColor}
+                        strokeWidth="3.5"
+                        strokeLinecap="round"
+                      />
+
+                      {/* Endpoint indicator */}
+                      <circle
+                        cx={endX}
+                        cy={endY}
+                        r="1.8"
+                        fill={riskAccentColor}
+                      />
+                    </svg>
+
+                    <span
+                      className="text-[9px] font-bold uppercase tracking-wider -mt-0.5"
+                      style={{ color: riskAccentColor }}
+                    >
+                      {mockRiskIndex}% Risk
+                    </span>
+                  </>
+                );
+              })()}
+            </div>
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-[#475569] dark:text-[#94A3B8] border-t border-[#F1F5F9] dark:border-[#1E293B] pt-2.5">
-            <span className="truncate">{filteredVulnerabilities.filter(v => v.status === 'Open').length} active risk exposure</span>
-            <span className="text-[10px] font-semibold shrink-0" style={{ color: riskAccentColor }}>{riskFooterLabel}</span>
+            <span className="truncate">
+              {filteredVulnerabilities.filter(v => v.status === 'Open').length} active risk exposure
+            </span>
+            <span
+              className="text-[10px] font-semibold shrink-0"
+              style={{ color: riskAccentColor }}
+            >
+              {riskFooterLabel}
+            </span>
           </div>
         </div>
 
@@ -583,19 +751,19 @@ export const Dashboard: React.FC = () => {
         </div>
 
         {/* Card 5: Unique CVEs */}
-        <div onClick={() => navigate('/vulnerabilities')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md">
-          {/* Subtle 2.5px top accent indicator (Red #DC2626) */}
-          <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#DC2626]" />
+        {/* <div onClick={() => navigate('/vulnerabilities')} className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md"> */}
+        {/* Subtle 2.5px top accent indicator (Red #DC2626) */}
+        {/* <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#DC2626]" /> */}
 
-          <div className="flex items-center justify-between gap-1.5">
+        {/* <div className="flex items-center justify-between gap-1.5">
             <div className="flex items-center gap-1.5 min-w-0">
               <ShieldAlert className="w-4 h-4 text-[#DC2626] shrink-0" strokeWidth={2} />
               <span className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#CBD5E1] truncate">
                 Unique CVEs
               </span>
             </div>
-          </div>
-
+          </div> */}
+        {/* 
           <div className="my-auto pt-1">
             <div className="text-[32px] sm:text-[34px] font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight font-sans leading-none">
               {uniqueCveSet.size}
@@ -603,252 +771,289 @@ export const Dashboard: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-[#475569] dark:text-[#94A3B8] border-t border-[#F1F5F9] dark:border-[#1E293B] pt-2.5">
-            <span className="truncate">{severityCounts.critical} critical findings</span>
+            <span className="truncate">{uniqueCriticalCveCount} critical findings</span>
           </div>
         </div>
+      </div> */}
+
+        {/* Card 5: Unique CVEs */}
+        <div
+          onClick={() => navigate('/vulnerabilities')}
+          className="bg-white dark:bg-[#111C2E] border border-[#E2E8F0] dark:border-[#243247] rounded-xl p-4 sm:p-4.5 shadow-[0_1px_3px_rgba(0,0,0,0.03)] flex flex-col justify-between min-h-[148px] relative overflow-hidden transition-all hover:border-[#CBD5E1] dark:hover:border-[#334460] cursor-pointer hover:shadow-md"
+        >
+          {/* Subtle 2.5px top accent indicator */}
+          <div className="absolute top-0 left-0 right-0 h-[2.5px] bg-[#DC2626]" />
+
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <ShieldAlert
+                className="w-4 h-4 text-[#DC2626] shrink-0"
+                strokeWidth={2}
+              />
+
+              <span className="text-[11px] font-bold uppercase tracking-wider text-[#475569] dark:text-[#CBD5E1] truncate">
+                Unique CVEs
+              </span>
+            </div>
+          </div>
+
+          {/* Total Unique CVEs */}
+          <div className="my-auto pt-1">
+            <div className="text-[32px] sm:text-[34px] font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight font-sans leading-none">
+              {uniqueCveSet.size}
+            </div>
+          </div>
+
+          {/* Unique Critical CVEs */}
+          <div className="flex items-center justify-between text-[11px] text-[#475569] dark:text-[#94A3B8] border-t border-[#F1F5F9] dark:border-[#1E293B] pt-2.5">
+            <span className="truncate">
+              {uniqueCriticalCveCount} critical findings
+            </span>
+          </div>
+        </div>
+
       </div>
 
-      {/* 3. Threat Severity Breakdown */}
-      <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs">
-        <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
-          <div>
-            <h3 className="text-sm font-bold text-gray-900 dark:text-white">Threat Severity Breakdown</h3>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Critical, High, Medium, and Low distribution of Common Vulnerabilities and Exposures</p>
-          </div>
-          {/* <span className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40">
+        {/* 3. Threat Severity Breakdown */}
+        <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs">
+          <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white">Threat Severity Breakdown</h3>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Critical, High, Medium, and Low distribution of Common Vulnerabilities and Exposures</p>
+            </div>
+            {/* <span className="text-[10px] font-bold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/40">
             {timeRange === '7D' ? 'Last 7 Days' : timeRange === '30D' ? 'Last 30 Days' : 'Last 90 Days'}
           </span> */}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center pt-4">
-          <div className="md:col-span-4 flex items-center justify-center">
-            <div className="relative w-[160px] h-[160px] shrink-0 flex items-center justify-center">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={severityDonutData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={48}
-                    outerRadius={70}
-                    paddingAngle={3}
-                    dataKey="value"
-                  >
-                    {severityDonutData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
-                <span className="text-2xl font-black text-gray-900 dark:text-white leading-none">
-                  {totalCves}
-                </span>
-                <span className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-semibold">Total CVEs</span>
-              </div>
-            </div>
           </div>
 
-          <div className="md:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3.5 rounded-xl border border-red-200/60 dark:border-red-900/40 bg-red-50/40 dark:bg-red-950/20">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-red-700 dark:text-red-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#e03131]" />
-                Critical
-              </div>
-              <div className="text-2xl font-black text-red-600 dark:text-red-400 font-mono mt-1.5">
-                {severityCounts.critical}
-              </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">CVSS 9.0 - 10.0</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-orange-200/60 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/20">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-orange-700 dark:text-orange-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#f97316]" />
-                High
-              </div>
-              <div className="text-2xl font-black text-orange-600 dark:text-orange-400 font-mono mt-1.5">
-                {severityCounts.high}
-              </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">CVSS 7.0 - 8.9</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
-                Medium
-              </div>
-              <div className="text-2xl font-black text-amber-600 dark:text-amber-400 font-mono mt-1.5">
-                {severityCounts.medium}
-              </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">CVSS 4.0 - 6.9</div>
-            </div>
-
-            <div className="p-3.5 rounded-xl border border-sky-200/60 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-sky-700 dark:text-sky-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#0ea5e9]" />
-                Low
-              </div>
-              <div className="text-2xl font-black text-sky-600 dark:text-sky-400 font-mono mt-1.5">
-                {severityCounts.low}
-              </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">CVSS 0.1 - 3.9</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* 4. LOWER CONTENT: Risk Trend Chart + Top 5 Vulnerable Projects */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
-        {/* Risk Trend Chart (7 cols) */}
-        <div className="lg:col-span-7 bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs">
-          <div className="flex items-center justify-between mb-2.5">
-            <div>
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">Risk Trend Chart</h3>
-              <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                Risk index and vulnerability count over the last {timeRange === '7D' ? '7 days' : timeRange === '30D' ? '30 days' : '90 days'}
-              </p>
-            </div>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5 text-red-600 font-semibold text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-red-600" /> Risk Index
-              </span>
-              <span className="flex items-center gap-1.5 text-blue-600 font-semibold text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-blue-600" /> Vuln Count
-              </span>
-            </div>
-          </div>
-
-          <div className="h-[175px] w-full flex items-center justify-center">
-            {riskTrendData.length === 0 ? (
-              <span className="text-xs text-gray-500 dark:text-gray-400">No data available yet.</span>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={riskTrendData} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} opacity={0.6} />
-                  <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                  <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                  <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', borderRadius: '8px', color: '#fff', fontSize: '11px', padding: '6px 10px' }} />
-                  <Line type="monotone" dataKey="riskIndex" stroke="#e03131" strokeWidth={2} dot={{ r: 2.5 }} />
-                  <Line type="monotone" dataKey="vulns" stroke="#3b82f6" strokeWidth={1.8} dot={{ r: 2.5 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        {/* Top 5 Vulnerable Projects (5 cols) */}
-        <div className="lg:col-span-5 bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">Top 5 Vulnerable Projects</h3>
-              <button
-                onClick={() => navigate('/software-inventory/projects')}
-                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-              >
-                View all →
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              {top5VulnerableProjects.length === 0 ? (
-                <div className="py-8 text-center text-xs text-gray-500 dark:text-gray-400">
-                  No data available yet.
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center pt-4">
+            <div className="md:col-span-4 flex items-center justify-center">
+              <div className="relative w-[160px] h-[160px] shrink-0 flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={severityDonutData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={48}
+                      outerRadius={70}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {severityDonutData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none">
+                  <span className="text-2xl font-black text-gray-900 dark:text-white leading-none">
+                    {totalCves}
+                  </span>
+                  <span className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-semibold">Total CVEs</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="md:col-span-8 grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3.5 rounded-xl border border-red-200/60 dark:border-red-900/40 bg-red-50/40 dark:bg-red-950/20">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-red-700 dark:text-red-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#e03131]" />
+                  Critical
+                </div>
+                <div className="text-2xl font-black text-red-600 dark:text-red-400 font-mono mt-1.5">
+                  {severityCounts.critical}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-0.5">CVSS 9.0 - 10.0</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-orange-200/60 dark:border-orange-900/40 bg-orange-50/40 dark:bg-orange-950/20">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-orange-700 dark:text-orange-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#f97316]" />
+                  High
+                </div>
+                <div className="text-2xl font-black text-orange-600 dark:text-orange-400 font-mono mt-1.5">
+                  {severityCounts.high}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-0.5">CVSS 7.0 - 8.9</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-amber-200/60 dark:border-amber-900/40 bg-amber-50/40 dark:bg-amber-950/20">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+                  Medium
+                </div>
+                <div className="text-2xl font-black text-amber-600 dark:text-amber-400 font-mono mt-1.5">
+                  {severityCounts.medium}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-0.5">CVSS 4.0 - 6.9</div>
+              </div>
+
+              <div className="p-3.5 rounded-xl border border-sky-200/60 dark:border-sky-900/40 bg-sky-50/40 dark:bg-sky-950/20">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-sky-700 dark:text-sky-300">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#0ea5e9]" />
+                  Low
+                </div>
+                <div className="text-2xl font-black text-sky-600 dark:text-sky-400 font-mono mt-1.5">
+                  {severityCounts.low}
+                </div>
+                <div className="text-[10px] text-gray-500 mt-0.5">CVSS 0.1 - 3.9</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 4. LOWER CONTENT: Risk Trend Chart + Top 5 Vulnerable Projects */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3.5">
+          {/* Risk Trend Chart (7 cols) */}
+          <div className="lg:col-span-7 bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs">
+            <div className="flex items-center justify-between mb-2.5">
+              <div>
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white">Risk Trend Chart</h3>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  Risk index and vulnerability count over the last {timeRange === '7D' ? '7 days' : timeRange === '30D' ? '30 days' : '90 days'}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1.5 text-red-600 font-semibold text-[11px]">
+                  <span className="w-2 h-2 rounded-full bg-red-600" /> Risk Index
+                </span>
+                <span className="flex items-center gap-1.5 text-blue-600 font-semibold text-[11px]">
+                  <span className="w-2 h-2 rounded-full bg-blue-600" /> Vuln Count
+                </span>
+              </div>
+            </div>
+
+            <div className="h-[175px] w-full flex items-center justify-center">
+              {riskTrendData.length === 0 ? (
+                <span className="text-xs text-gray-500 dark:text-gray-400">No data available yet.</span>
               ) : (
-                top5VulnerableProjects.map((proj, idx) => (
-                  <div
-                    key={proj.id}
-                    onClick={() => navigate(`/software-inventory/projects?q=${encodeURIComponent(proj.name)}`)}
-                    className="flex items-center justify-between py-1.5 px-2.5 rounded-lg border border-gray-100 dark:border-gray-800 hover:bg-gray-50/70 dark:hover:bg-gray-800/40 cursor-pointer transition-colors text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="w-4.5 h-4.5 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center font-bold text-[10px] text-gray-500">
-                        {idx + 1}
-                      </span>
-                      <div>
-                        <p className="font-bold text-gray-900 dark:text-white leading-tight">{proj.name}</p>
-                        <p className="text-[10px] text-gray-400">{proj.apps} microservices • {proj.cves} CVEs</p>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={riskTrendData} margin={{ top: 5, right: 10, left: -25, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} opacity={0.6} />
+                    <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                    <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
+                    <RechartsTooltip contentStyle={{ backgroundColor: '#1f2937', borderRadius: '8px', color: '#fff', fontSize: '11px', padding: '6px 10px' }} />
+                    <Line type="monotone" dataKey="riskIndex" stroke="#e03131" strokeWidth={2} dot={{ r: 2.5 }} />
+                    <Line type="monotone" dataKey="vulns" stroke="#3b82f6" strokeWidth={1.8} dot={{ r: 2.5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+
+          {/* Top 5 Vulnerable Projects (5 cols) */}
+          <div className="lg:col-span-5 bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white">Top 5 Vulnerable Projects</h3>
+                <button
+                  onClick={() => navigate('/software-inventory/projects')}
+                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                >
+                  View all →
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                {top5VulnerableProjects.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-gray-500 dark:text-gray-400">
+                    No data available yet.
+                  </div>
+                ) : (
+                  top5VulnerableProjects.map((proj, idx) => (
+                    <div
+                      key={proj.id}
+                      onClick={() => navigate(`/software-inventory/projects?q=${encodeURIComponent(proj.name)}`)}
+                      className="flex items-center justify-between py-1.5 px-2.5 rounded-lg border border-gray-100 dark:border-gray-800 hover:bg-gray-50/70 dark:hover:bg-gray-800/40 cursor-pointer transition-colors text-xs"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="w-4.5 h-4.5 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center font-bold text-[10px] text-gray-500">
+                          {idx + 1}
+                        </span>
+                        <div>
+                          <p className="font-bold text-gray-900 dark:text-white leading-tight">{proj.name}</p>
+                          <p className="text-[10px] text-gray-400">{proj.apps} microservices • {proj.cves} CVEs</p>
+                        </div>
+                      </div>
+                      <div className="text-right leading-tight">
+                        <span className="font-bold text-red-600 dark:text-red-400 text-xs block">{proj.riskScore.toFixed(1)}</span>
+                        <span className="text-[9px] uppercase font-bold text-gray-400">{proj.status}</span>
                       </div>
                     </div>
-                    <div className="text-right leading-tight">
-                      <span className="font-bold text-red-600 dark:text-red-400 text-xs block">{proj.riskScore.toFixed(1)}</span>
-                      <span className="text-[9px] uppercase font-bold text-gray-400">{proj.status}</span>
-                    </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* 5. Project Repository Table */}
-      <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <h3 className="text-sm font-bold text-gray-900 dark:text-white">Project Repository Table</h3>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Name, risk, applications, total scans, critical and high vulnerabilities</p>
+        {/* 5. Project Repository Table */}
+        <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 sm:p-4.5 shadow-2xs">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white">Project Repository Table</h3>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Name, risk, applications, total scans, critical and high vulnerabilities</p>
+            </div>
+            <button
+              onClick={() => navigate('/software-inventory/projects')}
+              className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+            >
+              Manage Projects →
+            </button>
           </div>
-          <button
-            onClick={() => navigate('/software-inventory/projects')}
-            className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-          >
-            Manage Projects →
-          </button>
-        </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="text-gray-500 border-b border-gray-100 dark:border-gray-800">
-                <th className="pb-2 font-semibold text-[11px]">NAME</th>
-                <th className="pb-2 font-semibold text-[11px]">RISK SCORE</th>
-                <th className="pb-2 font-semibold text-[11px]">SERVICES / APPS</th>
-                <th className="pb-2 font-semibold text-[11px]">TOTAL SCANS</th>
-                <th className="pb-2 font-semibold text-[11px]">VULNERABILITIES</th>
-                <th className="pb-2 font-semibold text-[11px]">LAST SCAN</th>
-                <th className="pb-2 font-semibold text-[11px] text-right">ACTION</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {filteredProjectRepositories.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-xs text-gray-500 dark:text-gray-400">
-                    No data available yet.
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-gray-500 border-b border-gray-100 dark:border-gray-800">
+                  <th className="pb-2 font-semibold text-[11px]">NAME</th>
+                  <th className="pb-2 font-semibold text-[11px]">RISK SCORE</th>
+                  <th className="pb-2 font-semibold text-[11px]">SERVICES / APPS</th>
+                  <th className="pb-2 font-semibold text-[11px]">TOTAL SCANS</th>
+                  <th className="pb-2 font-semibold text-[11px]">VULNERABILITIES</th>
+                  <th className="pb-2 font-semibold text-[11px]">LAST SCAN</th>
+                  <th className="pb-2 font-semibold text-[11px] text-right">ACTION</th>
                 </tr>
-              ) : (
-                filteredProjectRepositories.map((repo) => (
-                  <tr key={repo.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
-                    <td className="py-2.5 font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
-                      {repo.name}
-                    </td>
-                    <td className="py-2.5 font-bold text-gray-900 dark:text-white">{repo.risk} / 10</td>
-                    <td className="py-2.5 text-gray-600 dark:text-gray-400">{repo.apps} apps</td>
-                    <td className="py-2.5 text-gray-600 dark:text-gray-400 font-mono">{repo.scans}</td>
-                    <td className="py-2.5">
-                      <span className="text-red-600 dark:text-red-400 font-semibold">{repo.critVulns} Crit</span> •{' '}
-                      <span className="text-orange-500 dark:text-orange-400 font-semibold">{repo.highVulns} High</span>
-                    </td>
-                    <td className="py-2.5 text-gray-500 dark:text-gray-400 text-[11px]">{repo.lastScan}</td>
-                    <td className="py-2.5 text-right">
-                      <button
-                        onClick={() => navigate('/software-inventory/projects')}
-                        className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
-                      >
-                        Open Project →
-                      </button>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {filteredProjectRepositories.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-xs text-gray-500 dark:text-gray-400">
+                      No data available yet.
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  filteredProjectRepositories.map((repo) => (
+                    <tr key={repo.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
+                      <td className="py-2.5 font-bold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+                        {repo.name}
+                      </td>
+                      <td className="py-2.5 font-bold text-gray-900 dark:text-white">{repo.risk} / 10</td>
+                      <td className="py-2.5 text-gray-600 dark:text-gray-400">{repo.apps} apps</td>
+                      <td className="py-2.5 text-gray-600 dark:text-gray-400 font-mono">{repo.scans}</td>
+                      <td className="py-2.5">
+                        <span className="text-red-600 dark:text-red-400 font-semibold">{repo.critVulns} Crit</span> •{' '}
+                        <span className="text-orange-500 dark:text-orange-400 font-semibold">{repo.highVulns} High</span>
+                      </td>
+                      <td className="py-2.5 text-gray-500 dark:text-gray-400 text-[11px]">{repo.lastScan}</td>
+                      <td className="py-2.5 text-right">
+                        <button
+                          onClick={() => navigate('/software-inventory/projects')}
+                          className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                        >
+                          Open Project →
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-    </div>
-  );
+      );
 };
 
-export default Dashboard;
-
+      export default Dashboard;

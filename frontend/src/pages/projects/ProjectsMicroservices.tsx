@@ -318,7 +318,7 @@ export const ProjectsMicroservices: React.FC = () => {
                   });
                   const compCount = projectComps.length;
                   const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
-                  const vulnCount = p.vulns > 0 ? p.vulns : projectVulns.length;
+                  const vulnCount = projectVulns.length > 0 ? projectVulns.length : p.vulns;
 
                   return (
                     <tr key={p.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
@@ -457,7 +457,7 @@ export const ProjectsMicroservices: React.FC = () => {
         });
         const compCount = projectComps.length;
         const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
-        const vulnCount = p.vulns > 0 ? p.vulns : projectVulns.length;
+        const vulnCount = projectVulns.length > 0 ? projectVulns.length : p.vulns;
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
