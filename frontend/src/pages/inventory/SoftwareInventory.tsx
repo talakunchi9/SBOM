@@ -1156,13 +1156,13 @@ export const SoftwareInventory: React.FC = () => {
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
-                        <button
+                        {/* <button
                           onClick={() => addToast({ type: 'info', title: 'Component Inspection', message: `Inspecting ${c.name}@${c.version}` })}
                           className="p-1 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer transition-colors"
                           title="More options"
                         >
                           <MoreVertical className="w-3.5 h-3.5" />
-                        </button>
+                        </button> */}
                       </div>
                     </td>
                   </tr>
