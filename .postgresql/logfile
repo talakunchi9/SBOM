@@ -1,0 +1,5 @@
+2026-11-05 16:03:43.454 IST [7588] LOG:  starting PostgreSQL 18.6 on x86_64-windows, compiled by msvc-19.44.35229, 64-bit
+2026-11-05 16:03:43.459 IST [7588] LOG:  could not translate host name "'localhost'", service "5432" to address: Name or service not known
+2026-11-05 16:03:43.459 IST [7588] WARNING:  could not create listen socket for "'localhost'"
+2026-11-05 16:03:43.459 IST [7588] FATAL:  could not create any TCP/IP sockets
+2026-11-05 16:03:43.464 IST [7588] LOG:  database system is shut down
