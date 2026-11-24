@@ -9,6 +9,8 @@ import {
   Layers,
   ChevronRight,
   RotateCcw,
+  Power,
+  CheckCircle2,
 } from 'lucide-react';
 import type { ScanJob } from '../../types';
 
@@ -17,6 +19,7 @@ export interface ScanActionMenuProps {
   onViewDetails: (scan: ScanJob) => void;
   onExport: (format: 'spdx' | 'cyclonedx' | 'csv', scanId: string) => void;
   onRescan?: (scan: ScanJob) => void;
+  onToggleLifecycle?: (scan: ScanJob, newStatus: 'Active' | 'Decommissioned') => void;
   rescanning?: boolean;
 }
 
@@ -25,6 +28,7 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
   onViewDetails,
   onExport,
   onRescan,
+  onToggleLifecycle,
   rescanning = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -324,6 +328,49 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
                     </div>
                     <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
                       Run scan again with same source
+                    </div>
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* Option 4: Toggle Lifecycle Status */}
+            {onToggleLifecycle && (
+              <div className="mt-1 pt-1 border-t border-gray-100 dark:border-gray-800/80">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsOpen(false);
+                    const current = (scan.lifecycleStatus || 'Active').toLowerCase();
+                    const nextStatus: 'Active' | 'Decommissioned' = current === 'active' ? 'Decommissioned' : 'Active';
+                    onToggleLifecycle(scan, nextStatus);
+                  }}
+                  className="w-full text-left px-3 py-2 text-xs font-semibold rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer group"
+                >
+                  <div
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform ${
+                      (scan.lifecycleStatus || 'Active').toLowerCase() === 'active'
+                        ? 'bg-rose-100/80 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
+                        : 'bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
+                    }`}
+                  >
+                    {(scan.lifecycleStatus || 'Active').toLowerCase() === 'active' ? (
+                      <Power className="w-3.5 h-3.5" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400">
+                      {(scan.lifecycleStatus || 'Active').toLowerCase() === 'active'
+                        ? 'Decommission'
+                        : 'Mark Active'}
+                    </div>
+                    <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate">
+                      {(scan.lifecycleStatus || 'Active').toLowerCase() === 'active'
+                        ? 'Set lifecycle status to Decommissioned'
+                        : 'Set lifecycle status to Active'}
                     </div>
                   </div>
                 </button>

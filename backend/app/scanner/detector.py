@@ -44,6 +44,8 @@ BY_FILENAME = {
     "conan.lock": ("CONAN_LOCK", "conan", 5),
     "DESCRIPTION": ("R_DESCRIPTION", "cran", 3),
     "cabal.project": ("HASKELL_CABAL_PROJECT", "hackage", 2),
+    "bom.xml": ("CYCLONEDX_XML", "cyclonedx", 6),
+    "bom.json": ("JSON_MANIFEST", "cyclonedx", 6),
 }
 
 GRADLE_FILES = {"build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
@@ -88,6 +90,8 @@ def match_file(base: str) -> tuple[str, str, int] | None:
         return ("HASKELL_CABAL", "hackage", 3)
     if lower in GRADLE_FILES:
         return ("JAVA_GRADLE", "maven", 3)
+    if lower.endswith(".xml") and ("bom" in lower or "cyclonedx" in lower or lower.endswith(".cdx.xml")):
+        return ("CYCLONEDX_XML", "cyclonedx", 6)
     if lower.endswith(".json"):
         return ("JSON_MANIFEST", "generic", 3)
     return None

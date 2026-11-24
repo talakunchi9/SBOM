@@ -1,0 +1,1564 @@
+SBOM Target Schema and Validation Workflow
+Target database design, screen designs and the step-by-step validation plan
+
+--- TABLE START ---
+Item | Detail
+Document type | Architecture, database design and validation plan
+Date | 19 November 2026
+Prepared by | [Author Name – To Be Confirmed]
+Deadline | Next Tuesday
+Based on | Meeting notes (30 discussed scenarios, 12 open questions, 14 suggested scenarios) and the Excel field list
+--- TABLE END ---
+
+Item
+Detail
+Document type
+Architecture, database design and validation plan
+Date
+19 November 2026
+Prepared by
+[Author Name – To Be Confirmed]
+Deadline
+Next Tuesday
+Based on
+Meeting notes (30 discussed scenarios, 12 open questions, 14 suggested scenarios) and the Excel field list
+Contents
+1. Summary and Target Hierarchy
+2. Scenarios and Recommendations
+3. Target Database Schema (diagram)
+4. Field-Level Database Assessment
+5. Screen Designs (sample images)
+6. Basic, Enterprise and Ex-Later Classification
+7. Migration: Safe Rollout in Steps
+8. Priorities for Tuesday
+9. Validation Workflow, Step by Step
+10. Points to Verify Before Building
+1. Summary and Target Hierarchy
+
+--- TABLE START ---
+In plain words: the business thinks in four levels: an organisation owns applications, an application is made of modules, and each module uses packages. The current database already has this shape, but with different table names. The plan is to rename the tables, add a few columns, and add four validation checks, in small safe steps.
+--- TABLE END ---
+
+In plain words: the business thinks in four levels: an organisation owns applications, an application is made of modules, and each module uses packages. The current database already has this shape, but with different table names. The plan is to rename the tables, add a few columns, and add four validation checks, in small safe steps.
+Figure 1: The target business hierarchy
+1.1 Agreed Table Renaming
+
+--- TABLE START ---
+Current table | Target table | Business meaning | Example
+organizations | organizations | Multi-tenant organisation boundary | Default-Org, Fintech-Bank
+projects | applications | Top-level software application or product | Core Banking System, RBVM, Pent AI
+applications | modules | Sub-service, microservice or monorepo subfolder | Auth-Service, PDF-Engine, Frontend-App
+--- TABLE END ---
+
+Current table
+Target table
+Business meaning
+Example
+organizations
+organizations
+Multi-tenant organisation boundary
+Default-Org, Fintech-Bank
+projects
+applications
+Top-level software application or product
+Core Banking System, RBVM, Pent AI
+applications
+modules
+Sub-service, microservice or monorepo subfolder
+Auth-Service, PDF-Engine, Frontend-App
+Key insight: in 006_​ten_​tables.​up.​sql, what the code calls projects is what the business calls an Application, and what the code calls applications is what the business calls a Module. Renaming them lines the schema up with the Excel requirements.
+1.2 Result Counts
+
+--- TABLE START ---
+Item | Count
+Discussed scenarios (SC-01 to SC-30) | 30: 27 recommended now, 1 split (Git now, SVN later), 2 deferred to Enterprise
+Suggested scenarios (SG-01 to SG-14) | 14: 11 recommended now, 3 deferred
+Excel fields assessed | 39 rows in the field table (the plan calls them "38 fields")
+Validation gates | 4, run in a fixed order (Section 9)
+--- TABLE END ---
+
+Item
+Count
+Discussed scenarios (SC-01 to SC-30)
+30: 27 recommended now, 1 split (Git now, SVN later), 2 deferred to Enterprise
+Suggested scenarios (SG-01 to SG-14)
+14: 11 recommended now, 3 deferred
+Excel fields assessed
+39 rows in the field table (the plan calls them "38 fields")
+Validation gates
+4, run in a fixed order (Section 9)
+2. Scenarios and Recommendations
+Baseline means it should be in the first delivery. Enterprise means it can wait.
+2.1 The 30 Discussed Scenarios
+
+--- TABLE START ---
+ID | Area | Scenario | Recommendation | Action for Tuesday
+SC-01 | Inventory | Mark an application as Internal or External (vendor) | Baseline: Now | Add ownership_​type and vendor_​name to applications.
+SC-02 | Inventory | Two-level inventory: application data and package data | Baseline: Now | Level 1 shows application data; level 2 shows the package table.
+SC-03 | Inventory | Show where a package is used and how many times | Baseline: Now | Add GET /​api/​v1/​packages/​usage?purl=... grouped by application and module.
+SC-04 | Inventory | Same package in many apps (1 package, N instances) | Baseline: Now | Keep purl de-duplication; track instances per scan snapshot.
+SC-05 | Inventory | Microservice or API: package and vulnerability mapping | Baseline: Now | Each microservice is a modules row; packages link by module or manifest path.
+SC-06 | Inventory | App components with versions (for example PDF, Editor) | Baseline: Now | Covered by the multi-manifest parser in parsers.​py.
+SC-07 | Inventory | A package upgrade shows the new version | Baseline: Now | Native: the new scan snapshot records it.
+SC-08 | Inventory | A deleted package shows as removed in the new inventory | Baseline: Now | Native: absent in the latest snapshot; marked Removed in comparison.
+SC-09 | Inventory | A replaced package shows the new vendor or package | Baseline: Now | Native: the new package entry is recorded.
+SC-10 | Inventory | Developer name taken from Git | Baseline: Now | Already done (workspace.​py:179); stored in the database.
+SC-11 | Upload | Choose input type: source code or SBOM file | Baseline: Now | Backend handles both; add a radio toggle in the UI.
+SC-12 | Upload | Local upload from the user’s machine | Baseline: Now | Works via POST /​api/​v1/​scans/​local.
+SC-13 | Upload | Pull source from a remote Git URL | Baseline: Now | Works via POST /​api/​v1/​scans/​github.
+SC-14 | Upload | Integrations: SVN, Git, CI/CD | Git now; SVN Enterprise | Git works. SVN needs native binaries and credentials: defer.
+SC-15 | Upload | More than one source for one application | Enterprise | Multi-repo stitching needs multi-clone orchestration: defer.
+SC-16 | Scan | Find the code source and check the repository pattern | Baseline: Now | Stored in sboms.​repository_​url; add a simple Monorepo or Fork tag.
+SC-17 | Scan | Read app details (name, version, branch) from Git | Baseline: Now | Already filled during clone and manifest parsing.
+SC-18 | Scan | Full code scan | Baseline: Now | Works across 40+ manifest formats.
+SC-19 | Scan | Module scan (subfolder or specific module) | Baseline: Now | Add an optional path_​scope parameter.
+SC-20 | Scan | Diff scan (only changed code in a module) | Enterprise | Full scans take under 2 seconds; diff parsing adds complexity: defer.
+SC-21 | Scan | Scan fills the inventory automatically | Baseline: Now | Works in facts.​py.
+SC-22 | Vulnerability | Vendor-wise view of vulnerable packages | Baseline: Now | Group findings by supplier or applications.​vendor_​name.
+SC-23 | Vulnerability | Developer or owner-wise view of vulnerabilities | Baseline: Now | Group findings by sboms.​commit_​author.
+SC-24 | Vulnerability | Auto-close vulnerabilities on upgrade or removal | Baseline: Now | A rescan omits fixed CVEs; triage status persists in vulnerability_​triage.
+SC-25 | Validation | Duplicate project or application detection | Baseline: Now | Return HTTP 409 on a duplicate name in catalog/​store.​py.
+SC-26 | Reports | Search and launch a scan from the dashboard | Baseline: Now | Works in Dashboard.​tsx.
+SC-27 | Reports | Package counts: unique, vulnerable, instances | Baseline: Now | SQL: COUNT(DISTINCT package_​url) against COUNT(*).
+SC-28 | Reports | Split by "giving by" (inventory vs code) | Baseline: Now | Filter by source_​type (code versus SBOM file).
+SC-29 | History | Save each scan version against the application | Baseline: Now | Every scan creates an immutable snapshot.
+SC-30 | History | Never overwrite old versions (client-specific) | Baseline: Now | Snapshots are never deleted or changed on rescan.
+--- TABLE END ---
+
+ID
+Area
+Scenario
+Recommendation
+Action for Tuesday
+SC-01
+Inventory
+Mark an application as Internal or External (vendor)
+Baseline: Now
+Add ownership_​type and vendor_​name to applications.
+SC-02
+Inventory
+Two-level inventory: application data and package data
+Baseline: Now
+Level 1 shows application data; level 2 shows the package table.
+SC-03
+Inventory
+Show where a package is used and how many times
+Baseline: Now
+Add GET /​api/​v1/​packages/​usage?purl=... grouped by application and module.
+SC-04
+Inventory
+Same package in many apps (1 package, N instances)
+Baseline: Now
+Keep purl de-duplication; track instances per scan snapshot.
+SC-05
+Inventory
+Microservice or API: package and vulnerability mapping
+Baseline: Now
+Each microservice is a modules row; packages link by module or manifest path.
+SC-06
+Inventory
+App components with versions (for example PDF, Editor)
+Baseline: Now
+Covered by the multi-manifest parser in parsers.​py.
+SC-07
+Inventory
+A package upgrade shows the new version
+Baseline: Now
+Native: the new scan snapshot records it.
+SC-08
+Inventory
+A deleted package shows as removed in the new inventory
+Baseline: Now
+Native: absent in the latest snapshot; marked Removed in comparison.
+SC-09
+Inventory
+A replaced package shows the new vendor or package
+Baseline: Now
+Native: the new package entry is recorded.
+SC-10
+Inventory
+Developer name taken from Git
+Baseline: Now
+Already done (workspace.​py:179); stored in the database.
+SC-11
+Upload
+Choose input type: source code or SBOM file
+Baseline: Now
+Backend handles both; add a radio toggle in the UI.
+SC-12
+Upload
+Local upload from the user’s machine
+Baseline: Now
+Works via POST /​api/​v1/​scans/​local.
+SC-13
+Upload
+Pull source from a remote Git URL
+Baseline: Now
+Works via POST /​api/​v1/​scans/​github.
+SC-14
+Upload
+Integrations: SVN, Git, CI/CD
+Git now; SVN Enterprise
+Git works. SVN needs native binaries and credentials: defer.
+SC-15
+Upload
+More than one source for one application
+Enterprise
+Multi-repo stitching needs multi-clone orchestration: defer.
+SC-16
+Scan
+Find the code source and check the repository pattern
+Baseline: Now
+Stored in sboms.​repository_​url; add a simple Monorepo or Fork tag.
+SC-17
+Scan
+Read app details (name, version, branch) from Git
+Baseline: Now
+Already filled during clone and manifest parsing.
+SC-18
+Scan
+Full code scan
+Baseline: Now
+Works across 40+ manifest formats.
+SC-19
+Scan
+Module scan (subfolder or specific module)
+Baseline: Now
+Add an optional path_​scope parameter.
+SC-20
+Scan
+Diff scan (only changed code in a module)
+Enterprise
+Full scans take under 2 seconds; diff parsing adds complexity: defer.
+SC-21
+Scan
+Scan fills the inventory automatically
+Baseline: Now
+Works in facts.​py.
+SC-22
+Vulnerability
+Vendor-wise view of vulnerable packages
+Baseline: Now
+Group findings by supplier or applications.​vendor_​name.
+SC-23
+Vulnerability
+Developer or owner-wise view of vulnerabilities
+Baseline: Now
+Group findings by sboms.​commit_​author.
+SC-24
+Vulnerability
+Auto-close vulnerabilities on upgrade or removal
+Baseline: Now
+A rescan omits fixed CVEs; triage status persists in vulnerability_​triage.
+SC-25
+Validation
+Duplicate project or application detection
+Baseline: Now
+Return HTTP 409 on a duplicate name in catalog/​store.​py.
+SC-26
+Reports
+Search and launch a scan from the dashboard
+Baseline: Now
+Works in Dashboard.​tsx.
+SC-27
+Reports
+Package counts: unique, vulnerable, instances
+Baseline: Now
+SQL: COUNT(DISTINCT package_​url) against COUNT(*).
+SC-28
+Reports
+Split by "giving by" (inventory vs code)
+Baseline: Now
+Filter by source_​type (code versus SBOM file).
+SC-29
+History
+Save each scan version against the application
+Baseline: Now
+Every scan creates an immutable snapshot.
+SC-30
+History
+Never overwrite old versions (client-specific)
+Baseline: Now
+Snapshots are never deleted or changed on rescan.
+2.2 The 14 Suggested Scenarios
+
+--- TABLE START ---
+ID | Area | Suggested requirement | Tier | Decision | Reason
+SG-01 | Inventory | Duplicate package in one SBOM (keep count) | Baseline | Now | Done in pipeline.​py:71-102 with instance counting.
+SG-02 | Inventory | Package with no version marked "Version unknown" | Baseline | Now | The fallback prevents false vulnerability matches.
+SG-03 | Inventory | Manual edit with an audit reason | Enterprise | Later | Needs an override table and audit log; use rescan for now.
+SG-04 | Upload | SBOM format check (reject non-CycloneDX/SPDX) | Baseline | Now | Check the root schema; return HTTP 400 with a clear error.
+SG-05 | Scan | A failed scan does not corrupt the inventory | Baseline | Now | Scans run in a transaction; errors set FAILED without touching inventory.
+SG-06 | Validation | Reject or flag rows with no name or version | Baseline | Now | Validate before inserting into sbom_​components.
+SG-07 | Validation | Flag a purl with the wrong format | Baseline | Now | Add a Package URL validator.
+SG-08 | Vulnerability | Strict status flow (Open, In Progress, Closed) | Baseline | Now | Supported by vulnerability_​triage (migration 007).
+SG-09 | Vulnerability | An auto-closed vulnerability reopens if the package regresses | Baseline | Now | The scanner marks a finding active if the vulnerable version returns.
+SG-10 | Vulnerability | New CVE on existing inventory without a rescan | Enterprise | Later | Needs a background CVE crawler.
+SG-11 | History | Compare two scans (diff view) | Baseline | Now | Add GET /​api/​v1/​scans/​diff?base=A&target=B.
+SG-12 | History | Full user audit trail of manual edits | Enterprise | Later | Part of enterprise compliance and RBAC.
+SG-13 | Reports | Dashboard counts match the Export Center | Baseline | Now | Point exports at GET /​api/​v1/​scans/​{id}/​export.
+SG-14 | Reports | Package in 2 apps = 1 unique, 2 instances | Baseline | Now | Distinct count versus raw count verified.
+--- TABLE END ---
+
+ID
+Area
+Suggested requirement
+Tier
+Decision
+Reason
+SG-01
+Inventory
+Duplicate package in one SBOM (keep count)
+Baseline
+Now
+Done in pipeline.​py:71-102 with instance counting.
+SG-02
+Inventory
+Package with no version marked "Version unknown"
+Baseline
+Now
+The fallback prevents false vulnerability matches.
+SG-03
+Inventory
+Manual edit with an audit reason
+Enterprise
+Later
+Needs an override table and audit log; use rescan for now.
+SG-04
+Upload
+SBOM format check (reject non-CycloneDX/SPDX)
+Baseline
+Now
+Check the root schema; return HTTP 400 with a clear error.
+SG-05
+Scan
+A failed scan does not corrupt the inventory
+Baseline
+Now
+Scans run in a transaction; errors set FAILED without touching inventory.
+SG-06
+Validation
+Reject or flag rows with no name or version
+Baseline
+Now
+Validate before inserting into sbom_​components.
+SG-07
+Validation
+Flag a purl with the wrong format
+Baseline
+Now
+Add a Package URL validator.
+SG-08
+Vulnerability
+Strict status flow (Open, In Progress, Closed)
+Baseline
+Now
+Supported by vulnerability_​triage (migration 007).
+SG-09
+Vulnerability
+An auto-closed vulnerability reopens if the package regresses
+Baseline
+Now
+The scanner marks a finding active if the vulnerable version returns.
+SG-10
+Vulnerability
+New CVE on existing inventory without a rescan
+Enterprise
+Later
+Needs a background CVE crawler.
+SG-11
+History
+Compare two scans (diff view)
+Baseline
+Now
+Add GET /​api/​v1/​scans/​diff?base=A&target=B.
+SG-12
+History
+Full user audit trail of manual edits
+Enterprise
+Later
+Part of enterprise compliance and RBAC.
+SG-13
+Reports
+Dashboard counts match the Export Center
+Baseline
+Now
+Point exports at GET /​api/​v1/​scans/​{id}/​export.
+SG-14
+Reports
+Package in 2 apps = 1 unique, 2 instances
+Baseline
+Now
+Distinct count versus raw count verified.
+3. Target Database Schema
+In plain words: ten tables. Organisations own applications and repositories. Applications contain modules and are linked to repositories. Each scan produces one SBOM; an SBOM holds components and findings; findings point to a shared vulnerability list and can be overridden by triage.
+Figure 2: Target database diagram (PK = primary key, FK = link to another table)
+4. Field-Level Database Assessment
+Every field from the Excel list, with what exists today and what to do. A star (*) marks the fields highlighted yellow in the Excel list.
+
+--- TABLE START ---
+Entity | Field | Excel requirement | Database today | Action | Data type | Storage | Priority
+Application | Application ID | Mandatory / Auto | Partial (UUID id exists) | MODIFY | VARCHAR(64) | PK plus code APP-0001 | Now
+Application | Application Name | Mandatory / Manual | Implemented | KEEP | VARCHAR(200) | Unique (organization_​id, name) | Now
+Application | Owner (Business + Technical) | Mandatory / Manual | Missing | ADD | VARCHAR(255) | business_​owner, technical_​owner | Now
+Application | Development Type | Mandatory / Manual | Missing | ADD | VARCHAR(50) | In-house, Outsourced, Vendor, OSS fork | Now
+Application | Lifecycle Status | Mandatory / Manual | Missing | ADD | VARCHAR(50) | Default Active | Now
+Application | Last Scan Date | Mandatory / Derived | Missing on app | DERIVED | TIMESTAMPTZ | MAX(scans.​completed_​at) | Now
+App-Repo | Path Scope (monorepo) | Mandatory / Manual | Missing | ADD | VARCHAR(500) | app_​repositories.​path_​scope | Later
+App-Repo | Tracked Branches | Mandatory / Manual | Missing | ADD | TEXT[] | app_​repositories.​tracked_​branches | Later
+Repository | Repository Name | Mandatory / Auto | No table | NEW TABLE | VARCHAR(200) | repositories.​name | Later
+Repository | Repository URL | Mandatory / Manual | In sboms | KEEP / MOVE | VARCHAR(1000) | repositories.​url | Now
+Repository | SCM Provider / Source Type | Mandatory / Auto | In scans | KEEP | VARCHAR(50) | scans.​source_​type | Now
+Repository | Integration / Credential Ref | Mandatory / Manual | Implemented | KEEP | VARCHAR(64) | FK to credentials.​id | Now
+Branch | Branch | Mandatory / Auto | In sboms | KEEP | VARCHAR(255) | sboms.​repository_​branch | Now
+Module | Module (name + path) | Mandatory / Auto | In applications.​name | RENAME / ADD | VARCHAR(255) | Table modules: name, path | Now
+Module | Manifest / Lock files | Mandatory / Auto | In sbom_​components | KEEP | VARCHAR(500) | sbom_​components.​source_​manifest | Now
+Module | Programming Language | Mandatory / Auto | Missing on module | ADD | VARCHAR(100) | From the lock-file ecosystem | Now
+Module | Package Manager / Build Tool | Mandatory / Auto | In sbom_​components | KEEP | VARCHAR(50) | sbom_​components.​package_​manager | Now
+Module | Module Type | Mandatory / Derived | Missing | ADD | VARCHAR(50) | Library, Microservice, Frontend | Now
+Module | Code Origin | Mandatory / Derived | Missing | DERIVED | VARCHAR(50) | From applications.​development_​type | Now
+Scan | Code Version (commit SHA) | Mandatory / Auto | Implemented | KEEP | VARCHAR(100) | sboms.​commit_​sha | Now
+Scan * | Source Type, Trigger, Scanner + Version, Context | Mandatory / Auto | Partial | MODIFY | VARCHAR(100) | trigger, scanner_​name, scanner_​version, generation_​context | Now
+Package | Package Name | Mandatory / Auto | Implemented | KEEP | VARCHAR(255) | sbom_​components.​name | Now
+Package | Package Type / Ecosystem | Mandatory / Auto | Implemented | KEEP | VARCHAR(50) | sbom_​components.​ecosystem | Now
+Package | Base PURL (no version) | Mandatory / Auto | Derived on the fly | DERIVED | VARCHAR(500) | Strip @version from the purl | Now
+Package * | Internal / External / Vendor | Mandatory / Derived | Missing | ADD / DERIVE | VARCHAR(50) | Registry rules or namespace prefix | Now
+Package Version | Package Version | Mandatory / Auto | Implemented | KEEP | VARCHAR(100) | sbom_​components.​version | Now
+Package Version | PURL | Mandatory / Auto | Implemented | KEEP | VARCHAR(1000) | sbom_​components.​purl | Now
+Package Version | License | Mandatory / Enriched | Implemented | KEEP | VARCHAR(255) | sbom_​components.​license_​name | Now
+Usage * | Application and Module Name | Mandatory / Derived | Linked via SBOM | DERIVED | VARCHAR(255) | Join sboms to applications and modules | Now
+Usage | Repository and Branch | Mandatory / Auto | Implemented | KEEP | VARCHAR(255) | Stored in the sboms snapshot | Now
+Usage | Location and File Path | Mandatory / Auto | Implemented | KEEP | VARCHAR(500) | sbom_​components.​source_​manifest | Now
+Usage | Direct / Transitive | Mandatory / Auto | Implemented | KEEP | BOOLEAN | is_​direct_​dependency | Now
+Usage | Scope (runtime / dev / test) | Mandatory / Auto | Implemented | KEEP | VARCHAR(50) | dependency_​scope | Now
+Usage | Detection Method + Confidence | Mandatory / Auto | Missing column | ADD | VARCHAR(100) | Default "Manifest / Lockfile" (100%) | Now
+Usage * | First Detected Date | Mandatory / Derived | Missing aggregate | DERIVED | TIMESTAMPTZ | MIN(generated_​at) for the package | Now
+Usage * | Last Detected Date | Mandatory / Derived | Missing aggregate | DERIVED | TIMESTAMPTZ | MAX(generated_​at) for the package | Now
+Usage * | Status (Active / Removed) | Mandatory / Derived | Missing calculation | DERIVED | VARCHAR(20) | Active if in the latest scan, else Removed | Now
+Dep Edge | Parent and Child Package | Mandatory / Auto | Partial (depends_​on) | KEEP | TEXT[] | sbom_​components.​depends_​on | Now
+Change Event | History (Upgraded / Added / Removed) | Mandatory / Derived | Snapshot diff | DERIVED | JSONB | Compare snapshot N with N-1 | Now
+--- TABLE END ---
+
+Entity
+Field
+Excel requirement
+Database today
+Action
+Data type
+Storage
+Priority
+Application
+Application ID
+Mandatory / Auto
+Partial (UUID id exists)
+MODIFY
+VARCHAR(64)
+PK plus code APP-0001
+Now
+Application
+Application Name
+Mandatory / Manual
+Implemented
+KEEP
+VARCHAR(200)
+Unique (organization_​id, name)
+Now
+Application
+Owner (Business + Technical)
+Mandatory / Manual
+Missing
+ADD
+VARCHAR(255)
+business_​owner, technical_​owner
+Now
+Application
+Development Type
+Mandatory / Manual
+Missing
+ADD
+VARCHAR(50)
+In-house, Outsourced, Vendor, OSS fork
+Now
+Application
+Lifecycle Status
+Mandatory / Manual
+Missing
+ADD
+VARCHAR(50)
+Default Active
+Now
+Application
+Last Scan Date
+Mandatory / Derived
+Missing on app
+DERIVED
+TIMESTAMPTZ
+MAX(scans.​completed_​at)
+Now
+App-Repo
+Path Scope (monorepo)
+Mandatory / Manual
+Missing
+ADD
+VARCHAR(500)
+app_​repositories.​path_​scope
+Later
+App-Repo
+Tracked Branches
+Mandatory / Manual
+Missing
+ADD
+TEXT[]
+app_​repositories.​tracked_​branches
+Later
+Repository
+Repository Name
+Mandatory / Auto
+No table
+NEW TABLE
+VARCHAR(200)
+repositories.​name
+Later
+Repository
+Repository URL
+Mandatory / Manual
+In sboms
+KEEP / MOVE
+VARCHAR(1000)
+repositories.​url
+Now
+Repository
+SCM Provider / Source Type
+Mandatory / Auto
+In scans
+KEEP
+VARCHAR(50)
+scans.​source_​type
+Now
+Repository
+Integration / Credential Ref
+Mandatory / Manual
+Implemented
+KEEP
+VARCHAR(64)
+FK to credentials.​id
+Now
+Branch
+Branch
+Mandatory / Auto
+In sboms
+KEEP
+VARCHAR(255)
+sboms.​repository_​branch
+Now
+Module
+Module (name + path)
+Mandatory / Auto
+In applications.​name
+RENAME / ADD
+VARCHAR(255)
+Table modules: name, path
+Now
+Module
+Manifest / Lock files
+Mandatory / Auto
+In sbom_​components
+KEEP
+VARCHAR(500)
+sbom_​components.​source_​manifest
+Now
+Module
+Programming Language
+Mandatory / Auto
+Missing on module
+ADD
+VARCHAR(100)
+From the lock-file ecosystem
+Now
+Module
+Package Manager / Build Tool
+Mandatory / Auto
+In sbom_​components
+KEEP
+VARCHAR(50)
+sbom_​components.​package_​manager
+Now
+Module
+Module Type
+Mandatory / Derived
+Missing
+ADD
+VARCHAR(50)
+Library, Microservice, Frontend
+Now
+Module
+Code Origin
+Mandatory / Derived
+Missing
+DERIVED
+VARCHAR(50)
+From applications.​development_​type
+Now
+Scan
+Code Version (commit SHA)
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(100)
+sboms.​commit_​sha
+Now
+Scan *
+Source Type, Trigger, Scanner + Version, Context
+Mandatory / Auto
+Partial
+MODIFY
+VARCHAR(100)
+trigger, scanner_​name, scanner_​version, generation_​context
+Now
+Package
+Package Name
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(255)
+sbom_​components.​name
+Now
+Package
+Package Type / Ecosystem
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(50)
+sbom_​components.​ecosystem
+Now
+Package
+Base PURL (no version)
+Mandatory / Auto
+Derived on the fly
+DERIVED
+VARCHAR(500)
+Strip @version from the purl
+Now
+Package *
+Internal / External / Vendor
+Mandatory / Derived
+Missing
+ADD / DERIVE
+VARCHAR(50)
+Registry rules or namespace prefix
+Now
+Package Version
+Package Version
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(100)
+sbom_​components.​version
+Now
+Package Version
+PURL
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(1000)
+sbom_​components.​purl
+Now
+Package Version
+License
+Mandatory / Enriched
+Implemented
+KEEP
+VARCHAR(255)
+sbom_​components.​license_​name
+Now
+Usage *
+Application and Module Name
+Mandatory / Derived
+Linked via SBOM
+DERIVED
+VARCHAR(255)
+Join sboms to applications and modules
+Now
+Usage
+Repository and Branch
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(255)
+Stored in the sboms snapshot
+Now
+Usage
+Location and File Path
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(500)
+sbom_​components.​source_​manifest
+Now
+Usage
+Direct / Transitive
+Mandatory / Auto
+Implemented
+KEEP
+BOOLEAN
+is_​direct_​dependency
+Now
+Usage
+Scope (runtime / dev / test)
+Mandatory / Auto
+Implemented
+KEEP
+VARCHAR(50)
+dependency_​scope
+Now
+Usage
+Detection Method + Confidence
+Mandatory / Auto
+Missing column
+ADD
+VARCHAR(100)
+Default "Manifest / Lockfile" (100%)
+Now
+Usage *
+First Detected Date
+Mandatory / Derived
+Missing aggregate
+DERIVED
+TIMESTAMPTZ
+MIN(generated_​at) for the package
+Now
+Usage *
+Last Detected Date
+Mandatory / Derived
+Missing aggregate
+DERIVED
+TIMESTAMPTZ
+MAX(generated_​at) for the package
+Now
+Usage *
+Status (Active / Removed)
+Mandatory / Derived
+Missing calculation
+DERIVED
+VARCHAR(20)
+Active if in the latest scan, else Removed
+Now
+Dep Edge
+Parent and Child Package
+Mandatory / Auto
+Partial (depends_​on)
+KEEP
+TEXT[]
+sbom_​components.​depends_​on
+Now
+Change Event
+History (Upgraded / Added / Removed)
+Mandatory / Derived
+Snapshot diff
+DERIVED
+JSONB
+Compare snapshot N with N-1
+Now
+5. Screen Designs (sample images)
+
+--- TABLE START ---
+In plain words: these are sample pictures of the four screens the plan needs. White boxes are typed or chosen by the user; grey dashed boxes are filled in by the system.
+--- TABLE END ---
+
+In plain words: these are sample pictures of the four screens the plan needs. White boxes are typed or chosen by the user; grey dashed boxes are filled in by the system.
+5.1 Which fields go in the database and the UI
+
+--- TABLE START ---
+Entity | Field | In DB | In UI | UI behaviour | Input | Reason
+Application | Application ID | Yes | Yes | Read-only | System | Show the readable code (APP-0001) in the header.
+Application | Application Name | Yes | Yes | Form input | Manual | Mandatory; unique per organisation.
+Application | Business and Technical Owner | Yes | Yes | Form input | Manual | Mandatory accountability contacts.
+Application | Development Type | Yes | Yes | Dropdown | Manual | In-house, Outsourced, Vendor, OSS fork.
+Application | Lifecycle Status | Yes | Yes | Dropdown | Manual | Active, Deprecated, Archived.
+Application | Last Scan Date | Derived | Yes | Calculated | Derived | Read-only time of the latest completed scan.
+App-Repo | Path Scope (monorepo) | Yes | Yes | Form input | Manual | Default /; editable for monorepos.
+App-Repo | Tracked Branches | Yes | Yes | Form input | Manual | Comma-separated (for example main, develop).
+Repository | Repository URL | Yes | Yes | Form input | Manual | GitHub or GitLab URL.
+Repository | SCM Provider | Yes | Yes | Auto-filled | Scanner | Inferred from the URL.
+Repository | Credential Reference | Yes | Yes | Dropdown | Manual | Pick a saved token or SSH key.
+Module | Module Name and Path | Yes | Yes | Auto-filled | Scanner | From the manifest folder path.
+Module | Manifest Files | Yes | Yes | Read-only | Scanner | Shows package.​json, pom.​xml, and so on.
+Module | Programming Language | Yes | Yes | Auto-filled | Scanner | From the lock-file ecosystem.
+Module | Module Type | Yes | Yes | Dropdown | Derived / override | Microservice, Library, Frontend.
+Scan | Code Version (commit SHA) | Yes | Yes | Read-only | Scanner | With a copy button.
+Scan | Source Type and Trigger | Yes | Yes | Read-only | System | For example GitHub Webhook, Manual Upload.
+Package | Package Name and Version | Yes | Yes | Read-only | Scanner | Primary table columns.
+Package | PURL | Yes | Yes | Read-only | Scanner | Clickable purl.
+Package | Internal / External / Vendor | Yes | Yes | Badge | Derived / override | Colour badge by class.
+Package | License | Yes | Yes | Read-only | External / scanner | SPDX ID (MIT, Apache-2.​0).
+Usage | App and Module Usage List | Derived | Yes | Calculated | Derived | Drawer showing where the package is used.
+Usage | Direct vs Transitive | Yes | Yes | Badge | Scanner | Tag Direct or Transitive.
+Usage | First and Last Detected | Derived | Yes | Calculated | Derived | Timestamps in the details drawer.
+Usage | Usage Status | Derived | Yes | Badge | Derived | Active or Removed.
+--- TABLE END ---
+
+Entity
+Field
+In DB
+In UI
+UI behaviour
+Input
+Reason
+Application
+Application ID
+Yes
+Yes
+Read-only
+System
+Show the readable code (APP-0001) in the header.
+Application
+Application Name
+Yes
+Yes
+Form input
+Manual
+Mandatory; unique per organisation.
+Application
+Business and Technical Owner
+Yes
+Yes
+Form input
+Manual
+Mandatory accountability contacts.
+Application
+Development Type
+Yes
+Yes
+Dropdown
+Manual
+In-house, Outsourced, Vendor, OSS fork.
+Application
+Lifecycle Status
+Yes
+Yes
+Dropdown
+Manual
+Active, Deprecated, Archived.
+Application
+Last Scan Date
+Derived
+Yes
+Calculated
+Derived
+Read-only time of the latest completed scan.
+App-Repo
+Path Scope (monorepo)
+Yes
+Yes
+Form input
+Manual
+Default /; editable for monorepos.
+App-Repo
+Tracked Branches
+Yes
+Yes
+Form input
+Manual
+Comma-separated (for example main, develop).
+Repository
+Repository URL
+Yes
+Yes
+Form input
+Manual
+GitHub or GitLab URL.
+Repository
+SCM Provider
+Yes
+Yes
+Auto-filled
+Scanner
+Inferred from the URL.
+Repository
+Credential Reference
+Yes
+Yes
+Dropdown
+Manual
+Pick a saved token or SSH key.
+Module
+Module Name and Path
+Yes
+Yes
+Auto-filled
+Scanner
+From the manifest folder path.
+Module
+Manifest Files
+Yes
+Yes
+Read-only
+Scanner
+Shows package.​json, pom.​xml, and so on.
+Module
+Programming Language
+Yes
+Yes
+Auto-filled
+Scanner
+From the lock-file ecosystem.
+Module
+Module Type
+Yes
+Yes
+Dropdown
+Derived / override
+Microservice, Library, Frontend.
+Scan
+Code Version (commit SHA)
+Yes
+Yes
+Read-only
+Scanner
+With a copy button.
+Scan
+Source Type and Trigger
+Yes
+Yes
+Read-only
+System
+For example GitHub Webhook, Manual Upload.
+Package
+Package Name and Version
+Yes
+Yes
+Read-only
+Scanner
+Primary table columns.
+Package
+PURL
+Yes
+Yes
+Read-only
+Scanner
+Clickable purl.
+Package
+Internal / External / Vendor
+Yes
+Yes
+Badge
+Derived / override
+Colour badge by class.
+Package
+License
+Yes
+Yes
+Read-only
+External / scanner
+SPDX ID (MIT, Apache-2.​0).
+Usage
+App and Module Usage List
+Derived
+Yes
+Calculated
+Derived
+Drawer showing where the package is used.
+Usage
+Direct vs Transitive
+Yes
+Yes
+Badge
+Scanner
+Tag Direct or Transitive.
+Usage
+First and Last Detected
+Derived
+Yes
+Calculated
+Derived
+Timestamps in the details drawer.
+Usage
+Usage Status
+Derived
+Yes
+Badge
+Derived
+Active or Removed.
+5.2 Sample Screens
+A. Application Registration Form
+Opened from Catalog > Applications > New. The application ID is created by the system; the user fills in the name, owners, development type and lifecycle status.
+Figure 3: A. Application Registration Form
+B. Connect a Repository to an Application
+The user pastes the repository URL, picks the provider and saved credential, and can limit the scan to a monorepo folder and chosen branches.
+Figure 4: B. Connect a Repository to an Application
+C. Launch a Security Scan
+The user picks the application, how to give the code (repository or SBOM file), the branch, the scope (whole application or one module) and the trigger.
+Figure 5: C. Launch a Security Scan
+D. Package Usage Drawer
+Opened from the package inventory. Shows where one package is used, whether it is direct or transitive, and when it was first and last seen.
+Figure 6: D. Package Usage Drawer
+6. Basic, Enterprise and Ex-Later Classification
+
+--- TABLE START ---
+Capability | Tier | Database need | UI need | Code today | Tuesday
+Two-Level Inventory | Basic | Tables applications and modules | Application list with module drill-down | Working | Baseline
+Package Inventory | Basic | sbom_​components | Filterable table with purl and licence | Working | Baseline
+Git Source Scans | Basic | Clone workspace (workspace.​py) | GitHub URL input and token auth | Working | Baseline
+Local Code Upload | Basic | Archive unpacker (server.​py) | ZIP upload area | Working | Baseline
+SBOM JSON Upload | Basic | CycloneDX / SPDX parsers | File picker with format checks | Working | Baseline
+Vulnerability Matching | Basic | vulnerabilities, findings | CVSS scores, severity badges | Working | Baseline
+Vulnerability Triage | Basic | vulnerability_​triage | Set status (Open, Risk Accepted, Closed) | Working | Baseline
+Export Center | Basic | formats.​py (CDX 1.5, SPDX 2.3) | Download buttons wired to the API | Working (see note 5) | Baseline
+SVN Integration | Enterprise | SVN credential vault, repo tables | SVN URL input | Missing | Defer
+Incremental Diff Scan | Enterprise | Commit diff tracking | Diff view of modified files | Missing | Defer
+Multi-Repo Monorepo | Enterprise | Multi-repo orchestration | Mapping wizard | Missing | Defer
+Automated Jira Tickets | Enterprise | remediation_​tickets table | "Create Jira Issue" button | Stubs only | Defer
+Passive Live CVE Feed | Enterprise | Scheduled background worker | Live alert | Missing | Defer
+Full User Audit Log | Enterprise | audit_​logs table | History timeline | Missing | Defer
+Binary Disassembly | Ex-Later | Symbol-table disassembler | Binary report | None | Out of scope
+--- TABLE END ---
+
+Capability
+Tier
+Database need
+UI need
+Code today
+Tuesday
+Two-Level Inventory
+Basic
+Tables applications and modules
+Application list with module drill-down
+Working
+Baseline
+Package Inventory
+Basic
+sbom_​components
+Filterable table with purl and licence
+Working
+Baseline
+Git Source Scans
+Basic
+Clone workspace (workspace.​py)
+GitHub URL input and token auth
+Working
+Baseline
+Local Code Upload
+Basic
+Archive unpacker (server.​py)
+ZIP upload area
+Working
+Baseline
+SBOM JSON Upload
+Basic
+CycloneDX / SPDX parsers
+File picker with format checks
+Working
+Baseline
+Vulnerability Matching
+Basic
+vulnerabilities, findings
+CVSS scores, severity badges
+Working
+Baseline
+Vulnerability Triage
+Basic
+vulnerability_​triage
+Set status (Open, Risk Accepted, Closed)
+Working
+Baseline
+Export Center
+Basic
+formats.​py (CDX 1.5, SPDX 2.3)
+Download buttons wired to the API
+Working (see note 5)
+Baseline
+SVN Integration
+Enterprise
+SVN credential vault, repo tables
+SVN URL input
+Missing
+Defer
+Incremental Diff Scan
+Enterprise
+Commit diff tracking
+Diff view of modified files
+Missing
+Defer
+Multi-Repo Monorepo
+Enterprise
+Multi-repo orchestration
+Mapping wizard
+Missing
+Defer
+Automated Jira Tickets
+Enterprise
+remediation_​tickets table
+"Create Jira Issue" button
+Stubs only
+Defer
+Passive Live CVE Feed
+Enterprise
+Scheduled background worker
+Live alert
+Missing
+Defer
+Full User Audit Log
+Enterprise
+audit_​logs table
+History timeline
+Missing
+Defer
+Binary Disassembly
+Ex-Later
+Symbol-table disassembler
+Binary report
+None
+Out of scope
+7. Migration: Safe Rollout in Steps
+
+--- TABLE START ---
+In plain words: nothing is deleted at first. Step 1 only adds new columns, so the running system keeps working. Step 2 adds "alias" views with the new names. Step 3, the real rename, waits until after Tuesday.
+--- TABLE END ---
+
+In plain words: nothing is deleted at first. Step 1 only adds new columns, so the running system keeps working. Step 2 adds "alias" views with the new names. Step 3, the real rename, waits until after Tuesday.
+7.1 Impact by table
+
+--- TABLE START ---
+Existing table | Target table | Records | Action | Foreign keys affected | Risk
+organizations | organizations | Preserved | Keep as is. | None | None
+projects | applications | Preserved | Rename; add readable_​id, business_​owner, technical_​owner, development_​type, vendor_​name, lifecycle_​status. | modules.​application_​id, inventory_​components.​project_​id | Low (no data loss; use views)
+applications | modules | Preserved | Rename; add path, programming_​language, package_​manager, module_​type, code_​origin; rename project_​id to application_​id. | inventory_​components.​application_​id | Low
+scans | scans | Preserved | Add application_​id, trigger, scanner_​name, scanner_​version, generation_​context. | sboms.​scan_​id | Low (additive)
+sboms | sboms | Preserved | Add or rename catalog application reference. Snapshots stay immutable. | sbom_​components.​sbom_​id, findings.​sbom_​id | Zero
+sbom_​components | sbom_​components | Preserved | Add detection_​method, confidence; keep purl and manifest paths. | findings.​sbom_​component_​id | Zero
+vulnerability_​triage | vulnerability_​triage | Preserved | Keep application_​name and module_​name for continuity across scans. | None | Zero
+--- TABLE END ---
+
+Existing table
+Target table
+Records
+Action
+Foreign keys affected
+Risk
+organizations
+organizations
+Preserved
+Keep as is.
+None
+None
+projects
+applications
+Preserved
+Rename; add readable_​id, business_​owner, technical_​owner, development_​type, vendor_​name, lifecycle_​status.
+modules.​application_​id, inventory_​components.​project_​id
+Low (no data loss; use views)
+applications
+modules
+Preserved
+Rename; add path, programming_​language, package_​manager, module_​type, code_​origin; rename project_​id to application_​id.
+inventory_​components.​application_​id
+Low
+scans
+scans
+Preserved
+Add application_​id, trigger, scanner_​name, scanner_​version, generation_​context.
+sboms.​scan_​id
+Low (additive)
+sboms
+sboms
+Preserved
+Add or rename catalog application reference. Snapshots stay immutable.
+sbom_​components.​sbom_​id, findings.​sbom_​id
+Zero
+sbom_​components
+sbom_​components
+Preserved
+Add detection_​method, confidence; keep purl and manifest paths.
+findings.​sbom_​component_​id
+Zero
+vulnerability_​triage
+vulnerability_​triage
+Preserved
+Keep application_​name and module_​name for continuity across scans.
+None
+Zero
+7.2 Step 1: add columns only (migration 009)
+
+--- TABLE START ---
+Table | Columns added | Default value
+projects (future applications) | readable_​id, business_​owner, technical_​owner, development_​type, vendor_​name, lifecycle_​status | Empty text; In-house; Active
+applications (future modules) | path, programming_​language, package_​manager, module_​type, code_​origin | /; empty; empty; Microservice; Internal
+scans | trigger, scanner_​name, scanner_​version, generation_​context | Manual; Antigravity-Scanner; 1.​5.​0; Development
+--- TABLE END ---
+
+Table
+Columns added
+Default value
+projects (future applications)
+readable_​id, business_​owner, technical_​owner, development_​type, vendor_​name, lifecycle_​status
+Empty text; In-house; Active
+applications (future modules)
+path, programming_​language, package_​manager, module_​type, code_​origin
+/; empty; empty; Microservice; Internal
+scans
+trigger, scanner_​name, scanner_​version, generation_​context
+Manual; Antigravity-Scanner; 1.​5.​0; Development
+7.3 Step 2: compatibility views
+Create two read-only views, tbl_​applications (a copy of projects) and tbl_​modules (a copy of applications), so new code can use the new names while old code is unchanged.
+7.4 Step 3: physical rename (after Tuesday)
+Rename the table applications to modules.
+Rename the table projects to applications.
+In modules, rename the column project_​id to application_​id.
+8. Priorities for Tuesday
+Priority 1: must complete
+Fix the exporter standards bugs: in backend/​app/​export/​formats.​py, map CycloneDX scope (runtime to required) and fix SPDX checksums to 64-character lowercase hex; make ExportCenter.​tsx download from GET /​api/​v1/​scans/​{id}/​export.
+Apply additive migration 009 (Section 7.2).
+Add the four validation gates (Section 9): format, required fields, package URL, duplicates.
+Package usage endpoint (SC-03, SC-04, SG-14): GET /​api/​v1/​packages/​usage?purl=... returning distinct applications, modules and instances.
+Consistent dashboard counts (SC-27, SG-13): unique packages, total instances, and unique vulnerable packages.
+9. Validation Workflow, Step by Step
+
+--- TABLE START ---
+In plain words: validation means checking the data before saving it. There are four checks ("gates"). A request goes through them in order, like airport security. If any gate says no, the request stops there and the user sees a clear message. Only requests that pass all four gates are saved.
+--- TABLE END ---
+
+In plain words: validation means checking the data before saving it. There are four checks ("gates"). A request goes through them in order, like airport security. If any gate says no, the request stops there and the user sees a clear message. Only requests that pass all four gates are saved.
+9.1 The Whole Workflow in One Picture
+Read the picture from top to bottom. A "No" or "Yes" next to an arrow is the answer to the question in the diamond.
+Figure 7: The four validation gates, in order
+9.2 The Gates in Detail
+
+--- TABLE START ---
+Gate | Question it answers | Scenario ID | If it fails
+1 | Is the file a real CycloneDX or SPDX document? | SG-04 | Stop. Error 400, INVALID_​SBOM_​FORMAT
+2 | Does every component have a name and a version? | SG-06 | Stop. Error 422, MISSING_​REQUIRED_​FIELD
+3 | Is every package URL written correctly? | SG-07 | Flag a warning or stop, INVALID_​PURL_​FORMAT
+4 | Is this application (or repository and branch) already registered? | SC-25 | Manual: error 409. Bulk file: skip the row
+--- TABLE END ---
+
+Gate
+Question it answers
+Scenario ID
+If it fails
+1
+Is the file a real CycloneDX or SPDX document?
+SG-04
+Stop. Error 400, INVALID_​SBOM_​FORMAT
+2
+Does every component have a name and a version?
+SG-06
+Stop. Error 422, MISSING_​REQUIRED_​FIELD
+3
+Is every package URL written correctly?
+SG-07
+Flag a warning or stop, INVALID_​PURL_​FORMAT
+4
+Is this application (or repository and branch) already registered?
+SC-25
+Manual: error 409. Bulk file: skip the row
+Note: the source notes numbered the duplicate check as "Gate 1" in some places. In this document the gates are numbered in the order they run.
+Gate 1: Format check (SG-04)
+What it checks: whether an uploaded file is an SBOM at all. Allowed: CycloneDX JSON (1.3 to 1.6) and SPDX JSON (2.x).
+Step by step:
+The user uploads a file and chooses the input type "SBOM Document".
+The system tries to read the file as JSON. If that fails, stop with INVALID_​JSON.
+The system checks the top level is an object (curly braces). If not, stop with INVALID_​STRUCTURE.
+The system looks for CycloneDX signs: bomFormat equal to CycloneDX, or components together with a specVersion or metadata. If found, it checks the version is supported; if not, stop with UNSUPPORTED_​VERSION.
+If it is not CycloneDX, the system looks for SPDX signs: spdxVersion, or packages together with an SPDXID. The version must start with SPDX-2; otherwise stop with UNSUPPORTED_​VERSION.
+If it is neither, stop with INVALID_​SBOM_​FORMAT and the message "Uploaded file must be a valid CycloneDX or SPDX JSON document."
+If it passed, remember the format and version (for example CycloneDX 1.5) and go to Gate 2.
+Examples:
+
+--- TABLE START ---
+Uploaded file | What happens | What the user sees
+A text file with the words "not a json document" | Step 2 fails | 400, INVALID_​JSON
+A JSON file containing only random_​key | Step 6 fails | 400, INVALID_​SBOM_​FORMAT
+CycloneDX file, specVersion 1.5, with components | Step 4 passes | Accepted as CycloneDX 1.5
+SPDX file, spdxVersion SPDX-2.3 | Step 5 passes | Accepted as SPDX 2.3
+SPDX 3.0 file | Step 5 fails the version | 400, UNSUPPORTED_​VERSION
+--- TABLE END ---
+
+Uploaded file
+What happens
+What the user sees
+A text file with the words "not a json document"
+Step 2 fails
+400, INVALID_​JSON
+A JSON file containing only random_​key
+Step 6 fails
+400, INVALID_​SBOM_​FORMAT
+CycloneDX file, specVersion 1.5, with components
+Step 4 passes
+Accepted as CycloneDX 1.5
+SPDX file, spdxVersion SPDX-2.3
+Step 5 passes
+Accepted as SPDX 2.3
+SPDX 3.0 file
+Step 5 fails the version
+400, UNSUPPORTED_​VERSION
+Gate 2: Required fields (SG-06)
+What it checks: that every component has a name and a version.
+Step by step:
+The system goes through the components one by one and reads the name, and the version (or versionInfo in SPDX).
+If the name is blank, record an error for that row: "Component name is mandatory and cannot be blank."
+If the version is blank, or is NONE, NOASSERTION or UNKNOWN, look at the mode. Strict mode (a direct inventory upload): record an error. Permissive mode (a scan of repository manifests): accept it, show "Version unknown" and mark the NTIA version flag as false.
+When all rows are checked, if any errors were recorded, stop with MISSING_​REQUIRED_​FIELD and list every row with its field and message.
+If there were no errors, go to Gate 3.
+Examples:
+
+--- TABLE START ---
+Component | What happens | What the user sees
+Component with name express, version 4.​18.​2 | No errors | Accepted
+Component with only a version (no name) | Name error on that row | 422, MISSING_​REQUIRED_​FIELD, row 0, field name
+Component with a name but no version, strict mode | Version error | 422, field version
+Same component, permissive mode | Accepted as "Version unknown" | Accepted with a warning flag
+--- TABLE END ---
+
+Component
+What happens
+What the user sees
+Component with name express, version 4.​18.​2
+No errors
+Accepted
+Component with only a version (no name)
+Name error on that row
+422, MISSING_​REQUIRED_​FIELD, row 0, field name
+Component with a name but no version, strict mode
+Version error
+422, field version
+Same component, permissive mode
+Accepted as "Version unknown"
+Accepted with a warning flag
+Gate 3: Package URL (purl) (SG-07)
+What it checks: that each package URL follows the official format pkg:type/​namespace/​name@version?qualifiers#subpath.
+Step by step:
+The text must start with pkg:. If not, it is invalid.
+Next comes the type (for example npm, maven, pypi). It must start with a letter and may contain letters, digits, ., +, - and _.
+Then an optional namespace and a required name, separated by /. A missing name is invalid.
+Then, optionally, @version, ?qualifiers and #subpath.
+Special characters must be percent-encoded. For example the @ in a scoped npm name is written %40 (pkg:npm/%40angular/​core@14.​0.​0).
+If any purl is invalid, flag it (warning) or reject the upload, as decided for the project; the message names the bad purl. Otherwise go to Gate 4.
+Examples:
+
+--- TABLE START ---
+Package URL | Result | What the user sees
+pkg:npm/​lodash@4.​17.​21 | Valid | Accepted
+pkg:npm/%40angular/​core@14.​0.​0 | Valid | Accepted
+pkg:maven/​org.​apache.​commons/​commons-lang3@3.​12.​0 | Valid | Accepted
+pkg:pypi/​requests@2.​28.​1?extension=tar.​gz | Valid (has a qualifier) | Accepted
+pkg:npm/@angular/​core@14.​2.​0 | Invalid: the raw @ is not allowed | INVALID_​PURL_​FORMAT
+lodash@4.​17.​21 | Invalid: no pkg: | INVALID_​PURL_​FORMAT
+https://​npmjs.​com/​lodash | Invalid: a web address | INVALID_​PURL_​FORMAT
+pkg:npm/ | Invalid: no name | INVALID_​PURL_​FORMAT
+--- TABLE END ---
+
+Package URL
+Result
+What the user sees
+pkg:npm/​lodash@4.​17.​21
+Valid
+Accepted
+pkg:npm/%40angular/​core@14.​0.​0
+Valid
+Accepted
+pkg:maven/​org.​apache.​commons/​commons-lang3@3.​12.​0
+Valid
+Accepted
+pkg:pypi/​requests@2.​28.​1?extension=tar.​gz
+Valid (has a qualifier)
+Accepted
+pkg:npm/@angular/​core@14.​2.​0
+Invalid: the raw @ is not allowed
+INVALID_​PURL_​FORMAT
+lodash@4.​17.​21
+Invalid: no pkg:
+INVALID_​PURL_​FORMAT
+https://​npmjs.​com/​lodash
+Invalid: a web address
+INVALID_​PURL_​FORMAT
+pkg:npm/
+Invalid: no name
+INVALID_​PURL_​FORMAT
+Gate 4: Duplicate check (SC-25)
+What it checks: that the same application is not registered twice, and that duplicates in a bulk file are caught.
+Step by step:
+Rules: in one organisation no two applications share a name (ignoring upper and lower case). In one application no two modules share a name or path. In a bulk file, a repeated pair of repository URL and branch is a duplicate.
+When a user creates an application by hand: remove spaces around the name. If it is empty, stop with INVALID_​NAME (400).
+Look for an existing application with the same name in the same organisation. If one exists, stop with DUPLICATE_​APPLICATION (409): "Application 'Core-Banking-System' already exists in this organization."
+If none exists, create the application: new ID, next readable code such as APP-0042, save the owners, and show it to the user (201).
+In a bulk file, do the same check for each row. A duplicate row is flagged DUPLICATE_​PROJECT and skipped; the other rows continue.
+Examples:
+
+--- TABLE START ---
+Request | What happens | What the user sees
+Create "Core-Banking-System" for the first time | No match | 201 Created, ID APP-0001
+Create "Core-Banking-System" again | Match found | 409, DUPLICATE_​APPLICATION
+Create an application with an empty name | Empty name | 400, INVALID_​NAME
+Bulk file where row 5 repeats row 2 (same repository and branch) | Row 5 matches row 2 | Row 5 skipped and flagged DUPLICATE_​PROJECT
+--- TABLE END ---
+
+Request
+What happens
+What the user sees
+Create "Core-Banking-System" for the first time
+No match
+201 Created, ID APP-0001
+Create "Core-Banking-System" again
+Match found
+409, DUPLICATE_​APPLICATION
+Create an application with an empty name
+Empty name
+400, INVALID_​NAME
+Bulk file where row 5 repeats row 2 (same repository and branch)
+Row 5 matches row 2
+Row 5 skipped and flagged DUPLICATE_​PROJECT
+9.3 After the Gates: Saving
+All four gates have passed.
+The data is saved to the database.
+An immutable snapshot of the SBOM is created. Later scans never change it; they create a new snapshot.
+9.4 Complete Walk-Through of Three Cases
+
+--- TABLE START ---
+Case | Journey through the gates | Where it stops | User sees
+Upload invalid_​schema.​json (random JSON) | Gate 1: not a CycloneDX or SPDX document | Gate 1 | 400, INVALID_​SBOM_​FORMAT
+Upload a CycloneDX file where one component has no name | Gate 1 passes. Gate 2: row 0 has no name | Gate 2 | 422, MISSING_​REQUIRED_​FIELD with row 0
+Upload a clean CycloneDX file for a new application | Gates 1, 2, 3 and 4 all pass | None | Saved; snapshot created
+--- TABLE END ---
+
+Case
+Journey through the gates
+Where it stops
+User sees
+Upload invalid_​schema.​json (random JSON)
+Gate 1: not a CycloneDX or SPDX document
+Gate 1
+400, INVALID_​SBOM_​FORMAT
+Upload a CycloneDX file where one component has no name
+Gate 1 passes. Gate 2: row 0 has no name
+Gate 2
+422, MISSING_​REQUIRED_​FIELD with row 0
+Upload a clean CycloneDX file for a new application
+Gates 1, 2, 3 and 4 all pass
+None
+Saved; snapshot created
+9.5 Test Checklist
+These are the checks to run (manually or with automatic tests) to prove each gate works.
+
+--- TABLE START ---
+# | Gate | Test | Expected result
+1 | 1 | Valid CycloneDX JSON (specVersion 1.5, empty components) | Accepted as CycloneDX 1.5
+2 | 1 | Valid SPDX JSON (SPDX-2.​3) | Accepted as SPDX SPDX-2.3
+3 | 1 | Text that is not JSON | Error INVALID_​JSON
+4 | 1 | JSON with an unknown key only | Error INVALID_​SBOM_​FORMAT
+5 | 2 | Component with name and version | No errors
+6 | 2 | Component with no name | One error on field name
+7 | 2 | Component with no version, strict mode | One error on field version
+8 | 3 | Valid purls: npm, scoped npm (%40), maven, pypi, golang, cargo, nuget | All accepted
+9 | 3 | Invalid purls: empty, no pkg:, web URL, pkg:, pkg:npm/, pkg:///​name@1.​0.​0 | All rejected
+10 | 4 | Create an application twice with the same name | Second attempt gives 409
+11 | 4 | Bulk file with a repeated repository and branch | Duplicate row skipped and flagged
+--- TABLE END ---
+
+#
+Gate
+Test
+Expected result
+1
+1
+Valid CycloneDX JSON (specVersion 1.5, empty components)
+Accepted as CycloneDX 1.5
+2
+1
+Valid SPDX JSON (SPDX-2.​3)
+Accepted as SPDX SPDX-2.3
+3
+1
+Text that is not JSON
+Error INVALID_​JSON
+4
+1
+JSON with an unknown key only
+Error INVALID_​SBOM_​FORMAT
+5
+2
+Component with name and version
+No errors
+6
+2
+Component with no name
+One error on field name
+7
+2
+Component with no version, strict mode
+One error on field version
+8
+3
+Valid purls: npm, scoped npm (%40), maven, pypi, golang, cargo, nuget
+All accepted
+9
+3
+Invalid purls: empty, no pkg:, web URL, pkg:, pkg:npm/, pkg:///​name@1.​0.​0
+All rejected
+10
+4
+Create an application twice with the same name
+Second attempt gives 409
+11
+4
+Bulk file with a repeated repository and branch
+Duplicate row skipped and flagged
+Tests 1 to 9 can be written as automatic tests. Tests 10 and 11 need the running service and database. The source notes had no automatic test for gate 4.
+10. Points to Verify Before Building
+
+--- TABLE START ---
+In plain words: while preparing this document I found several places where the plan and its sample code do not quite agree. None change the direction, but each should be settled before coding.
+--- TABLE END ---
+
+In plain words: while preparing this document I found several places where the plan and its sample code do not quite agree. None change the direction, but each should be settled before coding.
+
+--- TABLE START ---
+# | Item | Why it needs checking
+1 | Purl with a raw @ (for example pkg:npm/@angular/​core@14.​2.​0) | I ran the pattern from the plan: it rejects this purl, because the namespace cannot start with @. Only the percent-encoded form (%40angular) passes. The plan’s own "valid purl" test list contains the raw form, so that test would fail. Decide whether to accept raw @ or fix the test list.
+2 | Permissive mode in Gate 2 | The rules say the version becomes "Version unknown" and the NTIA flag is false, but the sample code does nothing when strict mode is off. That behaviour still has to be built.
+3 | Supported CycloneDX versions | The sample code accepts 1.2 to 1.6, but the message and rules say 1.3 to 1.6. Pick one.
+4 | Test coverage | The test file has no test for the duplicate gate or the bulk duplicate rule.
+5 | Export Center "Working" | The classification table says the Export Center is wired to the API. The earlier validation found it builds its own files in the browser. Priority 1 fixes this; treat it as not working until then.
+6 | Checksum fix wording | Priority 1 says to fix SPDX SHA-256 to 64 hex characters. The real cause is the npm sha512- base64 text labelled SHA-256: decode it to hex and label it SHA-512.
+7 | Default scanner name in migration 009 | The migration defaults scanner_​name to Antigravity-Scanner and 1.​5.​0. The existing scanner reports bom-engine and sbom-engine-1.​0.​0. Choose the real values.
+8 | Helper functions in the sample code | find_​application_​by_​name, get_​next_​sequence, finish(self.​db) and the ? placeholders were not checked against the repository.
+9 | Case-insensitive names | The rule says case-insensitive, but the planned unique (organization_​id, name) is case-sensitive in PostgreSQL. Use a lower-case index or citext.
+10 | Counts | The plan says "38 Excel fields" but the field table has 39 rows. The 12 open questions are mentioned but not listed in the notes provided.
+11 | Purl failure handling | Gate 3 says "flag or reject". Decide which, and whether it differs for repository scans and SBOM uploads.
+--- TABLE END ---
+
+#
+Item
+Why it needs checking
+1
+Purl with a raw @ (for example pkg:npm/@angular/​core@14.​2.​0)
+I ran the pattern from the plan: it rejects this purl, because the namespace cannot start with @. Only the percent-encoded form (%40angular) passes. The plan’s own "valid purl" test list contains the raw form, so that test would fail. Decide whether to accept raw @ or fix the test list.
+2
+Permissive mode in Gate 2
+The rules say the version becomes "Version unknown" and the NTIA flag is false, but the sample code does nothing when strict mode is off. That behaviour still has to be built.
+3
+Supported CycloneDX versions
+The sample code accepts 1.2 to 1.6, but the message and rules say 1.3 to 1.6. Pick one.
+4
+Test coverage
+The test file has no test for the duplicate gate or the bulk duplicate rule.
+5
+Export Center "Working"
+The classification table says the Export Center is wired to the API. The earlier validation found it builds its own files in the browser. Priority 1 fixes this; treat it as not working until then.
+6
+Checksum fix wording
+Priority 1 says to fix SPDX SHA-256 to 64 hex characters. The real cause is the npm sha512- base64 text labelled SHA-256: decode it to hex and label it SHA-512.
+7
+Default scanner name in migration 009
+The migration defaults scanner_​name to Antigravity-Scanner and 1.​5.​0. The existing scanner reports bom-engine and sbom-engine-1.​0.​0. Choose the real values.
+8
+Helper functions in the sample code
+find_​application_​by_​name, get_​next_​sequence, finish(self.​db) and the ? placeholders were not checked against the repository.
+9
+Case-insensitive names
+The rule says case-insensitive, but the planned unique (organization_​id, name) is case-sensitive in PostgreSQL. Use a lower-case index or citext.
+10
+Counts
+The plan says "38 Excel fields" but the field table has 39 rows. The 12 open questions are mentioned but not listed in the notes provided.
+11
+Purl failure handling
+Gate 3 says "flag or reject". Decide which, and whether it differs for repository scans and SBOM uploads.

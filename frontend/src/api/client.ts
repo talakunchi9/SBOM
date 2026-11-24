@@ -70,6 +70,8 @@ export interface ApiScan {
   repository_url?: string;
   branch?: string;
   description?: string;
+  lifecycle_status?: string;
+  business_owner?: string;
 }
 
 export interface ApiScanStatus {
@@ -84,6 +86,8 @@ export interface ApiScanStatus {
   repository_url?: string;
   branch?: string;
   description?: string;
+  lifecycle_status?: string;
+  business_owner?: string;
 }
 
 export interface ApiComponent {
@@ -226,17 +230,64 @@ export async function listInventoryComponents(): Promise<ApiInventoryComponent[]
   return items;
 }
 
-export function createInventoryComponents(components: InventoryComponentInput[]): Promise<ApiInventoryComponent[]> {
+export function createInventoryComponents(components: InventoryComponentInput[], reason?: string): Promise<ApiInventoryComponent[]> {
   return request<ApiInventoryComponent[]>('/api/v1/inventory/components', {
     method: 'POST',
-    body: JSON.stringify({ components }),
+    body: JSON.stringify({ components, reason }),
   });
 }
 
-export function deleteInventoryComponent(id: string): Promise<{ deleted: boolean; id: string }> {
-  return request(`/api/v1/inventory/components/${encodeURIComponent(id)}`, {
+export function deleteInventoryComponent(id: string, reason?: string): Promise<{ deleted: boolean; id: string }> {
+  const query = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+  return request(`/api/v1/inventory/components/${encodeURIComponent(id)}${query}`, {
     method: 'DELETE',
   });
+}
+
+export interface PackageHistoryTimelineEvent {
+  type: string;
+  change_type: string;
+  version: string;
+  previous_version?: string | null;
+  application: string;
+  module: string;
+  scan_id?: string | null;
+  branch?: string;
+  commit_sha?: string;
+  source_manifest?: string;
+  scope?: string;
+  timestamp: string;
+  reason?: string;
+  author?: string;
+}
+
+export interface PackageHistoryResponse {
+  package_name: string;
+  distinct_versions: string[];
+  total_events: number;
+  timeline: PackageHistoryTimelineEvent[];
+}
+
+export function getPackageHistory(packageName: string): Promise<PackageHistoryResponse> {
+  return request<PackageHistoryResponse>(`/api/v1/packages/${encodeURIComponent(packageName)}/history`);
+}
+
+export interface InventoryAuditLogItem {
+  id: string;
+  organization_id: string;
+  application_id: string;
+  module_id: string;
+  component_name: string;
+  component_version: string;
+  action: string;
+  reason: string;
+  changed_by: string;
+  created_at: string;
+}
+
+export function getInventoryAuditLog(componentName?: string): Promise<{ items: InventoryAuditLogItem[]; total: number }> {
+  const query = componentName ? `?component_name=${encodeURIComponent(componentName)}` : '';
+  return request<{ items: InventoryAuditLogItem[]; total: number }>(`/api/v1/inventory/audit-log${query}`);
 }
 
 export function mapInventoryComponent(row: ApiInventoryComponent): SBOMComponent {
@@ -287,6 +338,12 @@ export interface ApiProjectSummary {
 export interface ApiProjectRow {
   id: string;
   name: string;
+  ownership?: string;
+  business_owner?: string;
+  source?: 'Internal' | 'External' | string;
+  repo_branch?: string;
+  version?: string;
+  module?: string;
   classifier: string;
   risk: 'Healthy' | 'Needs Attention' | 'High Risk';
   compliance: string;
@@ -342,6 +399,54 @@ export function scanVulnerabilities(id: string): Promise<ApiVulnMatch[] | null> 
   return request(`/api/v1/scans/${id}/vulnerabilities`);
 }
 
+export interface DuplicateCheckResult {
+  is_duplicate: boolean;
+  duplicate_type?: string;
+  application_name?: string;
+  module_name?: string;
+  version?: string;
+  completed_at?: string;
+  scan_id?: string;
+  component_stats?: {
+    total_new: number;
+    total_previous: number;
+    unchanged: number;
+    added: number;
+    removed: number;
+    upgraded: number;
+    match_pct: number;
+    added_samples?: string[];
+    removed_samples?: string[];
+    upgraded_samples?: [string, string, string][];
+  };
+}
+
+export function checkScanDuplicate(input: {
+  applicationName: string;
+  moduleName: string;
+  version: string;
+  file?: File | null;
+  folderFiles?: { file: File; relativePath: string }[];
+  repositoryUrl?: string;
+  branch?: string;
+}): Promise<DuplicateCheckResult> {
+  const body = new FormData();
+  body.append('application_name', input.applicationName);
+  body.append('module_name', input.moduleName);
+  body.append('version', input.version);
+  if (input.file) {
+    body.append('file', input.file);
+  }
+  if (input.folderFiles && input.folderFiles.length > 0) {
+    for (const item of input.folderFiles) {
+      body.append('files', item.file, item.relativePath);
+    }
+  }
+  if (input.repositoryUrl) body.append('repository_url', input.repositoryUrl);
+  if (input.branch) body.append('branch', input.branch);
+  return request('/api/v1/scans/preflight-check', { method: 'POST', body });
+}
+
 export function createLocalScan(
   source: { file?: File | null; folderFiles?: { file: File; relativePath: string }[] },
   project: string,
@@ -349,6 +454,13 @@ export function createLocalScan(
   version: string,
   ids?: { projectId?: string; applicationId?: string },
   description?: string,
+  governance?: {
+    businessOwner?: string;
+    technicalOwner?: string;
+    developmentType?: string;
+    vendorName?: string;
+    moduleType?: string;
+  },
 ): Promise<{ scan_id: string; status?: string; stage?: string }> {
   const body = new FormData();
   if (source.folderFiles && source.folderFiles.length > 0) {
@@ -376,6 +488,11 @@ export function createLocalScan(
   if (ids?.projectId) body.append('project_id', ids.projectId);
   if (ids?.applicationId) body.append('application_id', ids.applicationId);
   if (description) body.append('description', description);
+  if (governance?.businessOwner) body.append('business_owner', governance.businessOwner);
+  if (governance?.technicalOwner) body.append('technical_owner', governance.technicalOwner);
+  if (governance?.developmentType) body.append('development_type', governance.developmentType);
+  if (governance?.vendorName) body.append('vendor_name', governance.vendorName);
+  if (governance?.moduleType) body.append('module_type', governance.moduleType);
   return request('/api/v1/scans/local', { method: 'POST', body });
 }
 
@@ -389,6 +506,11 @@ export function createGitHubScan(input: {
   projectId?: string;
   applicationId?: string;
   description?: string;
+  businessOwner?: string;
+  technicalOwner?: string;
+  developmentType?: string;
+  vendorName?: string;
+  moduleType?: string;
 }): Promise<{ scan_id: string; status?: string; stage?: string }> {
   return request('/api/v1/scans/github', {
     method: 'POST',
@@ -401,6 +523,11 @@ export function createGitHubScan(input: {
       version: input.version || 'UNKNOWN',
       branch: input.branch,
       description: input.description || '',
+      business_owner: input.businessOwner || '',
+      technical_owner: input.technicalOwner || '',
+      development_type: input.developmentType || 'In-house',
+      vendor_name: input.vendorName || '',
+      module_type: input.moduleType || 'Microservice',
       authentication: input.credentialId ? { type: 'GITHUB_FINE_GRAINED_PAT', credential_id: input.credentialId } : undefined,
     }),
   });
@@ -510,6 +637,8 @@ export function sourceLabel(scan: {
   repository_url?: string;
   branch?: string;
   description?: string;
+  lifecycle_status?: string;
+  business_owner?: string;
 }): string {
   if (scan.repository_url) {
     return scan.branch ? `${scan.repository_url} (${scan.branch})` : scan.repository_url;
@@ -571,6 +700,8 @@ export function mapScan(scan: ApiScan): ScanJob {
     startedAt: scan.started_at,
     completedAt: scan.completed_at,
     duration: formatDuration(scan.started_at, settled ? scan.completed_at : undefined),
+    lifecycleStatus: (scan as any).lifecycle_status || 'Active',
+    businessOwner: scan.business_owner || undefined,
   };
 }
 
@@ -882,6 +1013,9 @@ export function mapVulns(
       sbomVersion: 'sbom-1.4.2',
       scanVersion: scanId ? `scan-${scanId.substring(0, 8)}` : 'scan-3.7.1',
       statusChanges: (m.status as any) || 'Open',
+      justification: (m as any).justification || '',
+      owner: (m as any).owner || '',
+      businessOwner: (m as any).business_owner || (m as any).businessOwner || '',
     };
   });
 }
@@ -919,4 +1053,53 @@ export function updateVulnerabilityStatus(
     body: JSON.stringify(params),
   });
 }
+
+export interface PackageOccurrenceUsage {
+  application_id: string;
+  application_name: string;
+  module_id: string;
+  module_name: string;
+  repository_url: string;
+  branch: string;
+  package_location: string;
+  direct_dependency: boolean;
+  scope: string;
+  detection_method: string;
+  confidence: number;
+  version: string;
+  purl?: string;
+  first_detected_at: string | null;
+  last_detected_at: string | null;
+  status: string;
+}
+
+export interface PackageOccurrencesResponse {
+  package_name: string;
+  occurrence_count: number;
+  applications_count: number;
+  modules_count: number;
+  usages: PackageOccurrenceUsage[];
+}
+
+export async function getPackageOccurrences(name: string, purl?: string): Promise<PackageOccurrencesResponse> {
+  const params = new URLSearchParams();
+  if (name) params.set('name', name);
+  if (purl) params.set('purl', purl);
+  return request<PackageOccurrencesResponse>(`/api/v1/packages/occurrences?${params.toString()}`);
+}
+
+export async function updateApplicationLifecycleStatus(
+  applicationNameOrId: string,
+  status: 'Active' | 'Decommissioned' | 'Inactive'
+): Promise<{ target: string; lifecycle_status: string }> {
+  return request<{ target: string; lifecycle_status: string }>(
+    `/api/v1/applications/${encodeURIComponent(applicationNameOrId)}/lifecycle-status`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lifecycle_status: status }),
+    }
+  );
+}
+
 

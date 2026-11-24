@@ -18,6 +18,8 @@ interface ProjectApplicationSelectProps {
   projectHint?: string;
   applicationHint?: string;
   className?: string;
+  allowCreate?: boolean;
+  freeform?: boolean;
 }
 
 export const ProjectApplicationSelect: React.FC<ProjectApplicationSelectProps> = ({
@@ -30,31 +32,38 @@ export const ProjectApplicationSelect: React.FC<ProjectApplicationSelectProps> =
   projectHint,
   applicationHint,
   className,
+  allowCreate = false,
+  freeform = true,
 }) => {
   const projects = useCatalogProjects();
   const applications = useCatalogApplications(value.project?.id || null);
-  const lastProject = useRef(value.project?.id || '');
+  const projectKey = value.project ? `${value.project.id || ''}:${value.project.name || ''}` : '';
+  const lastProject = useRef(projectKey);
   const [creatingProject, setCreatingProject] = useState(false);
   const [creatingApplication, setCreatingApplication] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [applicationError, setApplicationError] = useState<string | null>(null);
 
   useEffect(() => {
-    const nextId = value.project?.id || '';
-    if (lastProject.current === nextId) return;
-    lastProject.current = nextId;
-    if (value.application) onChange({ project: value.project, application: null });
-  }, [onChange, value.application, value.project]);
+    if (lastProject.current === projectKey) return;
+    const oldKey = lastProject.current;
+    lastProject.current = projectKey;
+    const oldId = oldKey.split(':')[0];
+    const newId = projectKey.split(':')[0];
+    if (oldId && newId && oldId !== newId && value.application) {
+      onChange({ project: value.project, application: null });
+    }
+  }, [onChange, value.application, value.project, projectKey]);
 
-  const applicationDisabled = !value.project;
+  const applicationDisabled = !value.project || !value.project.name?.trim();
   const applicationPlaceholder = applicationDisabled
-    ? 'Select a Project First'
+    ? 'Select an Application First'
     : applications.loading
-      ? 'Loading applications…'
-      : 'Select, search, or add an application';
+      ? 'Loading modules…'
+      : 'Select or type a module';
   const applicationEmpty = applications.error
     ? applications.error
-    : 'No applications yet. Type a name to add one.';
+    : 'No matching modules found';
 
   const addProject = async (name: string) => {
     setCreatingProject(true);
@@ -101,19 +110,24 @@ export const ProjectApplicationSelect: React.FC<ProjectApplicationSelectProps> =
           options={projects.items}
           loading={projects.loading}
           creating={creatingProject}
-          allowCreate
+          allowCreate={allowCreate}
+          freeform={freeform}
           error={projectError || projects.error}
-          emptyMessage={projects.error || 'No projects yet. Type a name to add one.'}
-          placeholder="Select, search, or add a project"
+          emptyMessage={projects.error || 'No matching applications found'}
+          placeholder="Select or type an application name"
           hint={projectHint}
           hasMore={projects.hasMore}
           onLoadMore={projects.loadMore}
           onQueryChange={projects.setQuery}
           onOpen={projects.reload}
-          onCreate={addProject}
+          onCreate={allowCreate ? addProject : undefined}
           onChange={(project) => {
             setProjectError(null);
-            onChange({ project, application: null });
+            const isDifferentProject = project?.id && value.project?.id && project.id !== value.project.id;
+            onChange({
+              project,
+              application: isDifferentProject ? null : value.application,
+            });
           }}
         />
       </div>
@@ -126,7 +140,8 @@ export const ProjectApplicationSelect: React.FC<ProjectApplicationSelectProps> =
           options={applications.items}
           loading={applications.loading}
           creating={creatingApplication}
-          allowCreate
+          allowCreate={allowCreate}
+          freeform={freeform}
           disabled={applicationDisabled}
           error={applicationError || applications.error}
           emptyMessage={applicationEmpty}
@@ -136,7 +151,7 @@ export const ProjectApplicationSelect: React.FC<ProjectApplicationSelectProps> =
           hasMore={applications.hasMore}
           onLoadMore={applications.loadMore}
           onQueryChange={applications.setQuery}
-          onCreate={addApplication}
+          onCreate={allowCreate ? addApplication : undefined}
           onChange={(application) => {
             setApplicationError(null);
             onChange({ project: value.project, application });

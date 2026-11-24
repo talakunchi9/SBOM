@@ -131,6 +131,134 @@ def build(cfg: Config | None = None) -> FastAPI:
     def metrics(request: Request):
         return _envelope(METRICS.snapshot(), rid(request))
 
+    @app.post("/api/v1/scans/preflight-check")
+    async def preflight_check(
+        request: Request,
+        application_name: str = Form(default=""),
+        module_name: str = Form(default=""),
+        project_name: str = Form(default=""),
+        version: str = Form(default=""),
+        file: UploadFile | None = File(default=None),
+        files: list[UploadFile] | None = File(default=None),
+        paths: list[str] | None = Form(default=None),
+        repository_url: str = Form(default=""),
+        branch: str = Form(default=""),
+    ):
+        org = _org(request)
+        # Check if called with JSON
+        content_type = request.headers.get("content-type") or ""
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+                application_name = body.get("application_name") or body.get("project_name") or application_name
+                module_name = body.get("module_name") or body.get("application_name") or module_name
+                version = body.get("version") or version
+                repository_url = body.get("repository_url") or repository_url
+                branch = body.get("branch") or branch
+            except Exception:
+                pass
+
+        app_name = (application_name or project_name or "").strip()
+        mod_name = (module_name or "").strip()
+        ver = (version or "").strip()
+
+        file_hash = ""
+        try:
+            if files:
+                pairs = []
+                for index, upload in enumerate(files):
+                    content = await upload.read()
+                    pairs.append((upload.filename or str(index), content))
+                if pairs and not all(len(c) == 0 for _, c in pairs):
+                    packed, _ = pack_folder(pairs)
+                    file_hash = hashlib.sha256(packed).hexdigest()
+            elif file:
+                content = await file.read()
+                if content:
+                    file_hash = hashlib.sha256(content).hexdigest()
+        except Exception:
+            pass
+
+        from app.repositories.facts import _safe_get
+
+        # LEVEL 1: If file_hash is present, check if this EXACT file content was already scanned
+        if file_hash:
+            file_query = """
+                SELECT s.id, s.created_at, s.completed_at, a.name AS app_name, m.name AS module_name, s.application_version, s.scan_status,
+                       COALESCE(s.project_id, '') AS legacy_project_id, COALESCE(s.application_name, '') AS legacy_app_name
+                FROM scans s
+                LEFT JOIN applications a ON s.catalog_project_id = a.id
+                LEFT JOIN modules m ON s.catalog_application_id = m.id
+                WHERE s.organization_id = ?
+                  AND s.scan_status IN ('COMPLETED', 'completed', 'QUEUED', 'RUNNING', 'SCANNING')
+                  AND (s.job_payload::text LIKE ? OR s.idempotency_key LIKE ?)
+                ORDER BY s.created_at DESC LIMIT 1
+            """
+            row = db.execute(file_query, [org, f"%{file_hash}%", f"%{file_hash}%"]).fetchone()
+            if row:
+                completed = _safe_get(row, "completed_at", 2) or _safe_get(row, "created_at", 1)
+                scan_app = _safe_get(row, "app_name", 3) or _safe_get(row, "legacy_project_id", 7) or app_name
+                scan_mod = _safe_get(row, "module_name", 4) or _safe_get(row, "legacy_app_name", 8) or mod_name
+                scan_ver = _safe_get(row, "application_version", 5) or ver
+                return _envelope(
+                    {
+                        "is_duplicate": True,
+                        "duplicate_type": "EXACT_FILE_EXISTS",
+                        "message": "This exact file has already been scanned in the system.",
+                        "application_name": scan_app,
+                        "module_name": scan_mod,
+                        "version": scan_ver,
+                        "completed_at": str(completed) if completed else "",
+                        "scan_id": _safe_get(row, "id", 0),
+                        "scan_status": _safe_get(row, "scan_status", 6),
+                    },
+                    rid(request),
+                )
+
+        # LEVEL 2: Metadata Check (Application + Module + Version / Git repo)
+        if app_name and ver:
+            norm_ver = ver.lstrip("vV")
+            meta_query = """
+                SELECT s.id, s.created_at, s.completed_at, a.name AS app_name, m.name AS module_name, s.application_version, s.scan_status,
+                       COALESCE(s.project_id, '') AS legacy_project_id, COALESCE(s.application_name, '') AS legacy_app_name
+                FROM scans s
+                LEFT JOIN applications a ON s.catalog_project_id = a.id
+                LEFT JOIN modules m ON s.catalog_application_id = m.id
+                WHERE s.organization_id = ?
+                  AND (lower(a.name) = lower(?) OR lower(s.project_id) = lower(?))
+                  AND (lower(m.name) = lower(?) OR lower(s.application_name) = lower(?) OR lower(s.application_id) = lower(?) OR ? = '')
+                  AND (s.application_version = ? OR ltrim(lower(s.application_version), 'v') = lower(?))
+                  AND s.scan_status IN ('COMPLETED', 'completed', 'QUEUED', 'RUNNING', 'SCANNING')
+            """
+            params = [org, app_name, app_name, mod_name, mod_name, mod_name, mod_name, ver, norm_ver]
+            if repository_url:
+                meta_query += " AND s.repository_url = ? AND (s.branch = ? OR ? = '')"
+                params.extend([repository_url.strip(), branch.strip(), branch.strip()])
+            meta_query += " ORDER BY s.created_at DESC LIMIT 1"
+
+            row = db.execute(meta_query, params).fetchone()
+            if row:
+                completed = _safe_get(row, "completed_at", 2) or _safe_get(row, "created_at", 1)
+                scan_app = _safe_get(row, "app_name", 3) or _safe_get(row, "legacy_project_id", 7) or app_name
+                scan_mod = _safe_get(row, "module_name", 4) or _safe_get(row, "legacy_app_name", 8) or mod_name
+                scan_ver = _safe_get(row, "application_version", 5) or ver
+                return _envelope(
+                    {
+                        "is_duplicate": True,
+                        "duplicate_type": "EXACT_SCAN_EXISTS",
+                        "message": "A scan for this application, module, and version already exists.",
+                        "application_name": scan_app,
+                        "module_name": scan_mod,
+                        "version": scan_ver,
+                        "completed_at": str(completed) if completed else "",
+                        "scan_id": _safe_get(row, "id", 0),
+                        "scan_status": _safe_get(row, "scan_status", 6),
+                    },
+                    rid(request),
+                )
+
+        return _envelope({"is_duplicate": False}, rid(request))
+
     @app.post("/api/v1/scans/local")
     async def local_scan(
         request: Request,
@@ -143,6 +271,12 @@ def build(cfg: Config | None = None) -> FastAPI:
         application_id: str = Form(default=""),
         version: str = Form(default=""),
         description: str = Form(default=""),
+        business_owner: str = Form(default=""),
+        technical_owner: str = Form(default=""),
+        development_type: str = Form(default="In-house"),
+        vendor_name: str = Form(default=""),
+        module_type: str = Form(default="Microservice"),
+        generation_context: str = Form(default="Source"),
     ):
         length = request.headers.get("content-length")
         if length and int(length) > cfg.max_upload_bytes:
@@ -207,7 +341,14 @@ def build(cfg: Config | None = None) -> FastAPI:
             return _error("INVALID_INPUT", "application_name is required", rid(request), 400)
         org = _org(request)
         try:
-            bound = _bind_scan_target(catalog, org, project_id, application_id, project_name, application_name)
+            bound = _bind_scan_target(
+                catalog, org, project_id, application_id, project_name, application_name,
+                business_owner=business_owner,
+                technical_owner=technical_owner,
+                development_type=development_type,
+                vendor_name=vendor_name,
+                module_type=module_type,
+            )
         except CatalogError as exc:
             return _catalog_error(exc, rid(request))
         if bound is not None:
@@ -233,6 +374,8 @@ def build(cfg: Config | None = None) -> FastAPI:
                     "version_strategy": strategy,
                     "bom_type": "SBOM",
                     "source_type": "LOCAL",
+                    "trigger": "Manual",
+                    "generation_context": generation_context or "Source",
                     "source_payload": {
                         "object_key": key,
                         "file_name": upload_name,
@@ -464,7 +607,80 @@ def build(cfg: Config | None = None) -> FastAPI:
         snap, err = _snap_for_scan(scans, boms, scan_id, _org(request), rid(request))
         if err:
             return err
-        return _envelope((snap.get("raw_metadata") or {}).get("vulnerability_matches"), rid(request))
+        raw_matches = (snap.get("raw_metadata") or {}).get("vulnerability_matches")
+        if not raw_matches or not isinstance(raw_matches, list):
+            return _envelope(raw_matches, rid(request))
+
+        org = _org(request)
+        sbom_id = snap.get("id") or ""
+        proj_name = snap.get("project_id") or ""
+
+        with db.lock:
+            findings_map = {}
+            if sbom_id:
+                try:
+                    f_rows = db.execute(
+                        """SELECT sc.id AS comp_id, UPPER(v.vulnerability_key) AS vuln_key,
+                                  f.status, f.vex_status, f.owner
+                           FROM findings f
+                           JOIN vulnerabilities v ON v.id = f.vulnerability_id
+                           JOIN sbom_components sc ON sc.id = f.sbom_component_id
+                           WHERE f.sbom_id = ?""",
+                        (sbom_id,),
+                    ).fetchall()
+                    for r in f_rows:
+                        findings_map[(str(r["comp_id"]), str(r["vuln_key"]))] = dict(r)
+                except Exception:
+                    pass
+
+            triage_map = {}
+            try:
+                t_rows = db.execute(
+                    """SELECT UPPER(vulnerability_key) AS vuln_key, project_name, application_name,
+                              status, vex_status, owner, justification
+                       FROM vulnerability_triage
+                       WHERE organization_id = ?
+                         AND (project_name = ? OR project_name = '')
+                       ORDER BY CASE WHEN project_name <> '' THEN 0 ELSE 1 END""",
+                    (org, proj_name),
+                ).fetchall()
+                for r in t_rows:
+                    vk = str(r["vuln_key"])
+                    if vk not in triage_map:
+                        triage_map[vk] = dict(r)
+            except Exception:
+                pass
+
+        enriched = []
+        for m in raw_matches:
+            if isinstance(m, dict):
+                c_id = str(m.get("component_id") or "")
+                v_key = str(m.get("vulnerability_id") or "").strip().upper()
+                f_entry = findings_map.get((c_id, v_key))
+                t_entry = triage_map.get(v_key)
+
+                item = dict(m)
+                if f_entry and f_entry.get("status"):
+                    item["status"] = f_entry["status"]
+                    item["vex_status"] = f_entry.get("vex_status") or item.get("vex_status") or "affected"
+                    if f_entry.get("owner"):
+                        item["owner"] = f_entry["owner"]
+                elif t_entry and t_entry.get("status"):
+                    item["status"] = t_entry["status"]
+                    item["vex_status"] = t_entry.get("vex_status") or item.get("vex_status") or "affected"
+                    if t_entry.get("owner"):
+                        item["owner"] = t_entry["owner"]
+
+                if t_entry and t_entry.get("justification"):
+                    item["justification"] = t_entry["justification"]
+                if t_entry and t_entry.get("owner"):
+                    item["owner"] = t_entry["owner"]
+
+                enriched.append(item)
+            else:
+                enriched.append(m)
+
+        return _envelope(enriched, rid(request))
 
     @app.get("/api/v1/vulnerabilities/triage")
     def list_vuln_triage(request: Request):
@@ -568,12 +784,70 @@ def build(cfg: Config | None = None) -> FastAPI:
                 tuple(params),
             )
 
+            try:
+                db.execute(
+                    """INSERT INTO inventory_change_log (
+                         id, organization_id, application_id, module_id, component_name, component_version,
+                         action, old_value, new_value, reason, changed_by, created_at
+                       ) VALUES (?, ?, ?, ?, ?, ?, 'VULN_STATUS_CHANGE', ?, ?, ?, 'admin', CURRENT_TIMESTAMP)""",
+                    (
+                        str(uuid.uuid4()), org, project_name or "", app_name or "",
+                        clean_cve, status,
+                        json.dumps({"status": current_status}),
+                        json.dumps({"status": status, "vex_status": vex_status}),
+                        justification or f"Status changed from {current_status} to {status}",
+                    ),
+                )
+            except Exception as e:
+                log.warning("Failed to record vulnerability audit log: %s", e)
+
         return _envelope({
             "cve": clean_cve,
             "status": status,
             "vex_status": vex_status,
             "project": project_name,
+            "owner": owner,
+            "justification": justification,
         }, rid(request))
+
+    @app.patch("/api/v1/applications/{target_name_or_id}/lifecycle-status")
+    async def update_app_lifecycle_status(target_name_or_id: str, request: Request):
+        org = _org(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        status = str(body.get("lifecycle_status") or body.get("status") or "").strip()
+        if not status:
+            return _error("INVALID_INPUT", "lifecycle_status is required", rid(request), 400)
+        s_lower = status.lower()
+        if s_lower in ("decommission", "decommissioned", "inactive", "disabled"):
+            norm_status = "Decommissioned"
+        elif s_lower in ("active", "enabled"):
+            norm_status = "Active"
+        else:
+            norm_status = "Decommissioned" if "decommission" in s_lower else "Active"
+
+        now = utcnow()
+        with db.lock:
+            db.execute(
+                """UPDATE applications 
+                   SET lifecycle_status = ?, updated_at = ? 
+                   WHERE organization_id = ? AND (id = ? OR LOWER(name) = LOWER(?))""",
+                (norm_status, now, org, target_name_or_id, target_name_or_id),
+            )
+            try:
+                db.execute(
+                    """UPDATE projects 
+                       SET lifecycle_status = ?, updated_at = ? 
+                       WHERE organization_id = ? AND (id = ? OR LOWER(name) = LOWER(?))""",
+                    (norm_status, now, org, target_name_or_id, target_name_or_id),
+                )
+            except Exception:
+                pass
+            from app.core.db import finish
+            finish(db)
+        return _envelope({"target": target_name_or_id, "lifecycle_status": norm_status}, rid(request))
 
 
     @app.get("/api/v1/scans/{scan_id}/export")
@@ -679,9 +953,25 @@ def build(cfg: Config | None = None) -> FastAPI:
         if not isinstance(items, list) or not items:
             return _error("INVALID_INPUT", "components are required", rid(request), 400)
         org = _org(request)
+        reason = str(body.get("reason") or "Manual addition").strip()
         try:
             normalized = [_bind_inventory_item(catalog, org, item) for item in items]
             saved = boms.add_inventory_components(org, normalized)
+            for item in (saved or []):
+                try:
+                    db.execute(
+                        """INSERT INTO inventory_change_log (
+                             id, organization_id, application_id, module_id, component_name, component_version,
+                             action, new_value, reason, changed_by, created_at
+                           ) VALUES (?, ?, ?, ?, ?, ?, 'ADD', ?, ?, 'admin', CURRENT_TIMESTAMP)""",
+                        (
+                            str(uuid.uuid4()), org, item.get("application_id") or "", item.get("module_id") or "",
+                            item.get("name") or "", item.get("version") or "",
+                            json.dumps(item), reason,
+                        ),
+                    )
+                except Exception:
+                    pass
         except CatalogError as exc:
             return _catalog_error(exc, rid(request))
         except ValueError as exc:
@@ -689,12 +979,190 @@ def build(cfg: Config | None = None) -> FastAPI:
         return _envelope(saved, rid(request), 201)
 
     @app.delete("/api/v1/inventory/components/{component_id}")
-    def delete_inventory(component_id: str, request: Request):
+    def delete_inventory(component_id: str, request: Request, reason: str = ""):
         org = _org(request)
-        deleted = boms.delete_inventory_component(org, component_id)
-        if not deleted:
+        deleted_row = boms.delete_inventory_component(org, component_id)
+        if not deleted_row:
             return _error("NOT_FOUND", "Component not found", rid(request), 404)
-        return _envelope({"deleted": True, "id": component_id}, rid(request))
+
+        audit_reason = (reason or request.headers.get("x-reason") or "Manual removal").strip()
+        try:
+            c_name = deleted_row.get("name") or ""
+            c_ver = deleted_row.get("version") or ""
+            c_app = deleted_row.get("application_id") or ""
+            c_mod = deleted_row.get("module_id") or ""
+            db.execute(
+                """INSERT INTO inventory_change_log (
+                     id, organization_id, application_id, module_id, component_name, component_version,
+                     action, old_value, reason, changed_by, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'REMOVE', ?, ?, 'admin', CURRENT_TIMESTAMP)""",
+                (
+                    str(uuid.uuid4()), org, c_app, c_mod, c_name, c_ver,
+                    json.dumps(deleted_row), audit_reason,
+                ),
+            )
+        except Exception:
+            pass
+
+        return _envelope({"deleted": True, "id": component_id, "reason": audit_reason}, rid(request))
+
+    @app.get("/api/v1/inventory/audit-log")
+    def get_inventory_audit_log(request: Request, component_name: str = "", limit: int = 50):
+        org = _org(request)
+        comp_name = component_name.strip()
+        if comp_name:
+            rows = db.execute(
+                """SELECT id, organization_id, application_id, module_id, component_name, component_version,
+                          action, reason, changed_by, created_at
+                   FROM inventory_change_log
+                   WHERE organization_id = ? AND LOWER(component_name) = LOWER(?)
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (org, comp_name, limit),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                """SELECT id, organization_id, application_id, module_id, component_name, component_version,
+                          action, reason, changed_by, created_at
+                   FROM inventory_change_log
+                   WHERE organization_id = ?
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (org, limit),
+            ).fetchall()
+
+        items = [
+            {
+                "id": r["id"],
+                "organization_id": r["organization_id"],
+                "application_id": r["application_id"],
+                "module_id": r["module_id"],
+                "component_name": r["component_name"],
+                "component_version": r["component_version"],
+                "action": r["action"],
+                "reason": r["reason"],
+                "changed_by": r["changed_by"],
+                "created_at": iso(r["created_at"]) if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+            }
+            for r in rows
+        ]
+        return _envelope({"items": items, "total": len(items)}, rid(request))
+
+    @app.get("/api/v1/packages/{package_name}/history")
+    def get_package_history(package_name: str, request: Request):
+        pkg_name = package_name.strip()
+        if not pkg_name:
+            return _error("INVALID_INPUT", "Package name is required", rid(request), 400)
+        org = _org(request)
+
+        scan_records = db.execute(
+            """SELECT sc.name, sc.version, sc.ecosystem, sc.dependency_scope, sc.is_direct_dependency,
+                      sc.source_manifest, s.id AS sbom_id, s.scan_id, s.generated_at,
+                      COALESCE(app.name, s.project_id) AS application_name,
+                      COALESCE(mod.name, s.application_id) AS module_name,
+                      s.repository_url, s.repository_branch, s.commit_sha
+               FROM sbom_components sc
+               JOIN sboms s ON s.id = sc.sbom_id
+               LEFT JOIN applications app ON app.id = s.project_id
+               LEFT JOIN modules mod ON mod.id = s.application_id
+               WHERE s.organization_id = ? AND LOWER(sc.name) = LOWER(?)
+               ORDER BY s.generated_at ASC""",
+            (org, pkg_name),
+        ).fetchall()
+
+        audit_records = db.execute(
+            """SELECT id, action, component_version, reason, changed_by, created_at, application_id, module_id
+               FROM inventory_change_log
+               WHERE organization_id = ? AND LOWER(component_name) = LOWER(?)
+               ORDER BY created_at ASC""",
+            (org, pkg_name),
+        ).fetchall()
+
+        timeline = []
+        last_version_by_mod = {}
+
+        for r in scan_records:
+            mod_key = f"{r['application_name']}/{r['module_name']}"
+            ver = r["version"]
+            prev_ver = last_version_by_mod.get(mod_key)
+            if prev_ver is None:
+                change_type = "ADDED"
+            elif prev_ver != ver:
+                change_type = "UPGRADED"
+            else:
+                change_type = "CURRENT"
+            last_version_by_mod[mod_key] = ver
+
+            timeline.append({
+                "type": "SCAN",
+                "change_type": change_type,
+                "version": ver,
+                "previous_version": prev_ver if change_type == "UPGRADED" else None,
+                "application": r["application_name"],
+                "module": r["module_name"],
+                "scan_id": r["scan_id"],
+                "branch": r["repository_branch"],
+                "commit_sha": r["commit_sha"],
+                "source_manifest": r["source_manifest"],
+                "scope": r["dependency_scope"],
+                "timestamp": iso(r["generated_at"]) if hasattr(r["generated_at"], "isoformat") else str(r["generated_at"]),
+                "reason": f"Detected in scan {r['scan_id']}",
+            })
+
+        for a in audit_records:
+            timeline.append({
+                "type": "AUDIT",
+                "change_type": a["action"],
+                "version": a["component_version"],
+                "previous_version": None,
+                "application": a["application_id"],
+                "module": a["module_id"],
+                "scan_id": None,
+                "branch": "",
+                "commit_sha": "",
+                "source_manifest": "Manual Override",
+                "scope": "manual",
+                "timestamp": iso(a["created_at"]) if hasattr(a["created_at"], "isoformat") else str(a["created_at"]),
+                "reason": a["reason"],
+                "author": a["changed_by"],
+            })
+
+        timeline.sort(key=lambda x: str(x["timestamp"]), reverse=True)
+        distinct_versions = sorted(list(set(t["version"] for t in timeline if t["version"])))
+
+        return _envelope({
+            "package_name": pkg_name,
+            "distinct_versions": distinct_versions,
+            "total_events": len(timeline),
+            "timeline": timeline,
+        }, rid(request))
+
+    @app.get("/api/v1/packages/occurrences")
+    def get_package_occurrences(request: Request, name: str = "", purl: str = ""):
+        pkg_name = (name or "").strip()
+        if not pkg_name and purl:
+            from app.core.inventory_derived import derive_base_purl
+            base = derive_base_purl(purl)
+            if base and "/" in base:
+                pkg_name = base.split("/")[-1].strip()
+            else:
+                pkg_name = purl.strip()
+        if not pkg_name:
+            return _error("INVALID_INPUT", "name or purl query parameter is required", rid(request), 400)
+        from app.core.inventory_derived import calculate_package_usages
+        usages = calculate_package_usages(db, package_name=pkg_name, organization_id=_org(request))
+        apps_count = len(set(u["application_id"] for u in usages if u.get("application_id")))
+        mods_count = len(set(u["module_id"] for u in usages if u.get("module_id")))
+        return _envelope(
+            {
+                "package_name": pkg_name,
+                "occurrence_count": len(usages),
+                "applications_count": apps_count,
+                "modules_count": mods_count,
+                "usages": usages,
+            },
+            rid(request),
+        )
 
     @app.post("/api/v1/scans/bulk")
     async def bulk_upload(request: Request, file: UploadFile | None = File(default=None), project_name: str = Form(default="")):
@@ -861,7 +1329,19 @@ def build(cfg: Config | None = None) -> FastAPI:
     return app
 
 
-def _bind_scan_target(catalog: CatalogRepo, org: str, project_id, application_id, project_name, application_name):
+def _bind_scan_target(
+    catalog: CatalogRepo,
+    org: str,
+    project_id,
+    application_id,
+    project_name,
+    application_name,
+    business_owner: str = "",
+    technical_owner: str = "",
+    development_type: str = "In-house",
+    vendor_name: str = "",
+    module_type: str = "Microservice",
+):
     """Validate IDs when the UI sent them; otherwise keep name-based scans and seed the catalog."""
     project_id = str(project_id or "").strip()
     application_id = str(application_id or "").strip()
@@ -877,7 +1357,16 @@ def _bind_scan_target(catalog: CatalogRepo, org: str, project_id, application_id
             persist_missing=False,
         )
     if project_name and application_name:
-        return catalog.ensure_named(org, project_name, application_name)
+        return catalog.ensure_named(
+            org,
+            project_name,
+            application_name,
+            business_owner=business_owner,
+            technical_owner=technical_owner,
+            development_type=development_type,
+            vendor_name=vendor_name,
+            module_type=module_type,
+        )
     return None
 
 
@@ -886,20 +1375,24 @@ def _bind_inventory_item(catalog: CatalogRepo, org: str, item: Any) -> dict[str,
         raise ValueError("each component must be an object")
     project_id = str(item.get("project_id") or item.get("projectId") or "").strip()
     application_id = str(item.get("application_id") or item.get("applicationId") or "").strip()
-    if not project_id and not application_id:
+    proj_name = str(item.get("project") or item.get("project_name") or item.get("projectName") or "").strip()
+    app_name = str(item.get("project_application") or item.get("projectApplication") or item.get("application") or item.get("application_name") or "").strip()
+    if not project_id and not application_id and not proj_name and not app_name:
         return item
     bound = catalog.bind(
         org,
         project_id=project_id,
         application_id=application_id,
-        project_name=str(item.get("project") or item.get("project_name") or ""),
-        application_name=str(item.get("project_application") or item.get("projectApplication") or ""),
-        persist_missing=False,
+        project_name=proj_name or "Default-Application",
+        application_name=app_name or "Default-Module",
+        persist_missing=True,
     )
     patched = dict(item)
     patched["project"] = bound.project_name
     patched["project_name"] = bound.project_name
     patched["project_application"] = bound.application_name
+    patched["project_id"] = bound.project_id
+    patched["application_id"] = bound.application_id
     return patched
 
 

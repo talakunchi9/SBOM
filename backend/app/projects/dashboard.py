@@ -36,6 +36,29 @@ def list_projects(
     rows = scans.list_scans(org_id, limit=limit)
     groups: dict[str, dict[str, Any]] = {}
 
+    # Query application metadata from database if available
+    app_meta: dict[str, dict[str, Any]] = {}
+    try:
+        if hasattr(scans, "db"):
+            db_apps = scans.db.execute(
+                """SELECT id, name, technical_owner, business_owner, development_type, lifecycle_status
+                   FROM applications WHERE organization_id = ?""",
+                (org_id,),
+            ).fetchall()
+            for r in db_apps:
+                m = {
+                    "id": str(r[0]),
+                    "name": str(r[1]),
+                    "technical_owner": str(r[2] or "").strip(),
+                    "business_owner": str(r[3] or "").strip(),
+                    "development_type": str(r[4] or "internal").strip(),
+                    "lifecycle_status": str(r[5] or "Active").strip(),
+                }
+                app_meta[str(r[0])] = m
+                app_meta[str(r[1]).lower()] = m
+    except Exception:
+        pass
+
     for scan in rows:
         key = _project_key(scan)
         if not key:
@@ -45,6 +68,7 @@ def list_projects(
             group = {
                 "id": key,
                 "name": _project_name(scan),
+                "module": _module_name(scan),
                 "scan_rows": [],
                 "sources": set(),
             }
@@ -77,11 +101,28 @@ def list_projects(
         sources = sorted(group["sources"])
         classifier = CLASSIFIER_BY_SOURCE.get(sources[0] if sources else "", "Service / Microservice")
         tags = _tags(sources, classifier)
+        app_name = group["name"]
+        meta = app_meta.get(app_name.lower()) or app_meta.get((group.get("module") or "").lower()) or {}
+        lifecycle_status = meta.get("lifecycle_status") or "Active"
+        business_owner = meta.get("business_owner") or ""
+        technical_owner = meta.get("technical_owner") or ""
+        ownership = _resolve_ownership(app_name, app_meta, latest)
+        source = _resolve_source(app_name, app_meta, sources)
+        repo_branch = _format_repo_branch(latest)
+        version = str(latest.get("application_version") or "").strip() or "—"
 
         projects.append(
             {
                 "id": group["id"],
-                "name": group["name"],
+                "name": app_name,
+                "lifecycle_status": lifecycle_status,
+                "business_owner": business_owner,
+                "technical_owner": technical_owner,
+                "ownership": ownership,
+                "source": source,
+                "repo_branch": repo_branch,
+                "version": version,
+                "module": group.get("module") or "Main",
                 "classifier": classifier,
                 "risk": risk,
                 "compliance": f"{compliance_pct:.1f}%",
@@ -141,9 +182,56 @@ def list_projects(
 
 def _project_key(scan: dict[str, Any]) -> str:
     project = str(scan.get("project_id") or "").strip()
+    module = _module_name(scan)
+    if project and module and module.lower() != project.lower():
+        return f"{project}::{module}"
     if project:
         return project
     return str(scan.get("application_id") or scan.get("application_name") or "").strip()
+
+
+def _module_name(scan: dict[str, Any]) -> str:
+    app_name = str(scan.get("application_name") or "").strip()
+    if app_name:
+        return app_name
+    app_id = str(scan.get("application_id") or "").strip()
+    if app_id:
+        return app_id
+    return "Main"
+
+
+def _format_repo_branch(scan: dict[str, Any]) -> str:
+    repo = str(scan.get("repository_url") or "").strip()
+    branch = str(scan.get("branch") or "").strip()
+    if repo and branch:
+        short_repo = repo.replace("https://", "").replace("http://", "").rstrip("/")
+        return f"{short_repo} · {branch}"
+    if repo:
+        return repo.replace("https://", "").replace("http://", "").rstrip("/")
+    return "-"
+
+
+def _resolve_ownership(app_name: str, app_meta: dict[str, Any], latest_scan: dict[str, Any]) -> str:
+    meta = app_meta.get(app_name.lower()) or {}
+    biz = meta.get("business_owner")
+    if biz:
+        return biz
+    desc = str(latest_scan.get("description") or "").strip()
+    if "business_owner:" in desc.lower():
+        parts = desc.split("business_owner:", 1)
+        if len(parts) > 1:
+            return parts[1].split()[0]
+    return "—"
+
+
+def _resolve_source(app_name: str, app_meta: dict[str, Any], scan_sources: list[str]) -> str:
+    meta = app_meta.get(app_name.lower()) or {}
+    dev_type = (meta.get("development_type") or "").lower()
+    if dev_type in ("external", "vendor", "outsourced"):
+        return "External"
+    if dev_type in ("internal", "in-house"):
+        return "Internal"
+    return "Internal"
 
 
 def _project_name(scan: dict[str, Any]) -> str:

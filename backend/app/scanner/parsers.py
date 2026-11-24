@@ -142,6 +142,8 @@ def parse_manifest(kind: str, path: Path, rel: str) -> dict:
         return parse_cabal(raw, rel)
     if kind == "JSON_MANIFEST":
         return parse_json_manifest(raw, rel)
+    if kind == "CYCLONEDX_XML":
+        return parse_cyclonedx_xml(raw, rel)
     raise KeyError(kind)
 
 
@@ -1707,6 +1709,88 @@ def parse_json_manifest(raw: bytes, rel: str) -> dict:
                 license=str(item.get("license") or ""),
             )
         )
+
+    return res
+
+
+def parse_cyclonedx_xml(raw: bytes, rel: str) -> dict:
+    """Parses CycloneDX XML (1.2 - 1.6) manifest/BOM files."""
+    res = {"components": [], "dependencies": [], "source_manifest": rel}
+    try:
+        root = ET.fromstring(raw)
+    except Exception:
+        return res
+
+    def local_tag(tag: str) -> str:
+        return tag.split("}")[-1] if "}" in tag else tag
+
+    for comp_el in root.iter():
+        if local_tag(comp_el.tag) != "component":
+            continue
+        name = ""
+        version = ""
+        purl = ""
+        license_val = ""
+        supplier_val = ""
+        scope_val = "runtime"
+        is_direct = True
+
+        for child in comp_el:
+            tag = local_tag(child.tag)
+            if tag == "name" and child.text:
+                name = child.text.strip()
+            elif tag == "version" and child.text:
+                version = child.text.strip()
+            elif tag == "purl" and child.text:
+                purl = child.text.strip()
+            elif tag == "scope" and child.text:
+                scope_val = child.text.strip().lower()
+                if scope_val in ("optional", "dev", "test"):
+                    is_direct = False
+            elif tag == "supplier":
+                for sup_child in child:
+                    if local_tag(sup_child.tag) == "name" and sup_child.text:
+                        supplier_val = sup_child.text.strip()
+            elif tag == "licenses":
+                for lic_el in child.iter():
+                    if local_tag(lic_el.tag) in ("id", "name") and lic_el.text:
+                        license_val = lic_el.text.strip()
+                        break
+
+        if not name:
+            continue
+
+        eco = "generic"
+        if "pkg:npm" in purl:
+            eco = "npm"
+        elif "pkg:pypi" in purl or "pkg:pip" in purl:
+            eco = "pypi"
+        elif "pkg:maven" in purl:
+            eco = "maven"
+        elif "pkg:golang" in purl or "pkg:go" in purl:
+            eco = "go"
+        elif "pkg:cargo" in purl:
+            eco = "cargo"
+        elif "pkg:nuget" in purl:
+            eco = "nuget"
+        elif "pkg:composer" in purl:
+            eco = "composer"
+        elif "pkg:gem" in purl:
+            eco = "rubygems"
+
+        c = _comp(
+            name=name,
+            version=version,
+            ecosystem=eco,
+            package_manager=eco,
+            purl=purl or (f"pkg:{eco}/{name}@{version}" if version else f"pkg:{eco}/{name}"),
+            direct=is_direct,
+            scope=scope_val,
+            source_manifest=rel,
+            license=license_val,
+            supplier=supplier_val,
+        )
+        res["components"].append(c)
 
     return res
 

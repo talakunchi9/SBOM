@@ -14,12 +14,21 @@ import {
   Shield,
   Box,
   Package,
+  X,
+  GitBranch,
+  FileCode,
+  Eye,
 } from 'lucide-react';
 import { useAppState } from '../../context/AppStateContext';
 import { Vulnerability, Severity, VexStatus } from '../../types';
-import { extractVulnName } from '../../api/client';
+import {
+  extractVulnName,
+  getPackageOccurrences,
+  listProjects,
+  PackageOccurrenceUsage,
+  PackageOccurrencesResponse,
+} from '../../api/client';
 import { TablePagination } from '../../components/common/TablePagination';
-import { VulnerabilityActionMenu } from './VulnerabilityActionMenu';
 
 export const Vulnerabilities: React.FC = () => {
   const navigate = useNavigate();
@@ -39,6 +48,52 @@ export const Vulnerabilities: React.FC = () => {
   const [showFiltersPanel, setShowFiltersPanel] = useState<boolean>(false);
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [vexFilter, setVexFilter] = useState<string>('All');
+
+  // SC-03: Package occurrence tracking & drawer state
+  const [occurrenceStats, setOccurrenceStats] = useState<
+    Record<string, { count: number; appsCount: number; modulesCount: number }>
+  >({});
+  const [selectedPackageForDrawer, setSelectedPackageForDrawer] = useState<string | null>(null);
+  const [drawerData, setDrawerData] = useState<PackageOccurrencesResponse | null>(null);
+  const [loadingDrawer, setLoadingDrawer] = useState(false);
+  const [drawerFilter, setDrawerFilter] = useState('');
+
+  // Business Owner resolution map from application catalog
+  const [appBusinessOwners, setAppBusinessOwners] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    let active = true;
+    listProjects()
+      .then((data) => {
+        if (!active) return;
+        const map: Record<string, string> = {};
+        (data.projects || []).forEach((p) => {
+          const biz = (p as any).business_owner || p.ownership;
+          if (biz && biz !== '—') {
+            map[p.name.toLowerCase().trim()] = biz;
+          }
+        });
+        setAppBusinessOwners(map);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const resolveBizOwner = (v: Vulnerability): string => {
+    const projKey = (v.project || '').toLowerCase().trim();
+    const appKey = (v.application || '').toLowerCase().trim();
+    return (
+      v.businessOwner ||
+      (v as any).business_owner ||
+      appBusinessOwners[projKey] ||
+      appBusinessOwners[appKey] ||
+      (scansHistory || []).find((s) => s.targetProject?.toLowerCase() === projKey)?.businessOwner ||
+      (scansHistory || []).find((s) => s.appService?.toLowerCase() === appKey)?.businessOwner ||
+      '—'
+    );
+  };
 
   // Sync state if URL query param changes
   useEffect(() => {
@@ -276,7 +331,11 @@ export const Vulnerabilities: React.FC = () => {
         selectedSeverity === 'All' || v.severity.toLowerCase() === selectedSeverity.toLowerCase();
 
       const matchesStatus =
-        statusFilter === 'All' || v.status.toLowerCase() === statusFilter.toLowerCase();
+        statusFilter === 'All' ||
+        v.status.toLowerCase() === statusFilter.toLowerCase() ||
+        (statusFilter.toLowerCase() === 'closed' && (v.status.toLowerCase() === 'resolved' || v.status.toLowerCase() === 'fixed')) ||
+        (statusFilter.toLowerCase() === 'fixed' && (v.status.toLowerCase() === 'resolved' || v.status.toLowerCase() === 'closed')) ||
+        (statusFilter.toLowerCase() === 'resolved' && (v.status.toLowerCase() === 'closed' || v.status.toLowerCase() === 'fixed'));
 
       const matchesVex =
         vexFilter === 'All' || v.vexStatus.toLowerCase() === vexFilter.toLowerCase();
@@ -301,6 +360,136 @@ export const Vulnerabilities: React.FC = () => {
   const startIndex = (safeCurrentPage - 1) * pageSize;
   const endIndex = Math.min(startIndex + pageSize, totalItems);
   const paginatedVulnerabilities = filtered.slice(startIndex, endIndex);
+
+  // SC-03: Fetch occurrence statistics for paginated vulnerabilities
+  useEffect(() => {
+    if (!paginatedVulnerabilities || paginatedVulnerabilities.length === 0) return;
+    const uniquePackages = Array.from(
+      new Set(paginatedVulnerabilities.map((v) => (v.package || '').trim()).filter(Boolean))
+    );
+    let isMounted = true;
+
+    uniquePackages.forEach(async (pkgName) => {
+      const key = pkgName.toLowerCase();
+      if (occurrenceStats[key]) return;
+
+      try {
+        const res = await getPackageOccurrences(pkgName);
+        if (isMounted && res && res.occurrence_count > 0) {
+          setOccurrenceStats((prev) => ({
+            ...prev,
+            [key]: {
+              count: res.occurrence_count,
+              appsCount: res.applications_count,
+              modulesCount: res.modules_count,
+            },
+          }));
+          return;
+        }
+      } catch {
+        // Fall through to local fallback
+      }
+
+      if (isMounted) {
+        const localMatches = (components || []).filter(
+          (c) => c.name.toLowerCase() === key
+        );
+        const apps = new Set(localMatches.map((c) => c.project));
+        setOccurrenceStats((prev) => ({
+          ...prev,
+          [key]: {
+            count: Math.max(localMatches.length, 1),
+            appsCount: Math.max(apps.size, 1),
+            modulesCount: Math.max(apps.size, 1),
+          },
+        }));
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [paginatedVulnerabilities, components, occurrenceStats]);
+
+  const handleOpenOccurrenceDrawer = async (pkgName: string, purl?: string, currentVuln?: Vulnerability) => {
+    setSelectedPackageForDrawer(pkgName);
+    setLoadingDrawer(true);
+    setDrawerFilter('');
+
+    try {
+      const res = await getPackageOccurrences(pkgName, purl);
+      if (res && res.usages && res.usages.length > 0) {
+        setDrawerData(res);
+        setLoadingDrawer(false);
+        return;
+      }
+    } catch {
+      // API call failed; fall through to local fallback
+    }
+
+    const localMatches = (components || []).filter(
+      (comp) => comp.name.toLowerCase() === pkgName.toLowerCase()
+    );
+    const usages: PackageOccurrenceUsage[] = localMatches.map((m) => ({
+      application_id: m.project,
+      application_name: m.project,
+      module_id: (m as any).module || (m as any).application || m.project,
+      module_name: (m as any).module || (m as any).application || 'Default Module',
+      repository_url: '',
+      branch: 'main',
+      package_location: (m as any).sourceManifest || (m as any).packageLocation || 'package.json',
+      direct_dependency: (m as any).direct ?? m.directDependency ?? true,
+      scope: (m as any).scope || 'runtime',
+      detection_method: 'Manifest / Lockfile',
+      confidence: 1.0,
+      version: m.version,
+      purl: m.purl || `pkg:npm/${m.name}@${m.version}`,
+      first_detected_at: null,
+      last_detected_at: null,
+      status: 'Active',
+    }));
+
+    setDrawerData({
+      package_name: pkgName,
+      occurrence_count: Math.max(usages.length, 1),
+      applications_count: Math.max(new Set(usages.map((u) => u.application_name)).size, 1),
+      modules_count: Math.max(new Set(usages.map((u) => u.module_name)).size, 1),
+      usages: usages.length > 0 ? usages : [
+        {
+          application_id: currentVuln?.project || 'Project',
+          application_name: currentVuln?.project || 'Project',
+          module_id: currentVuln?.application || currentVuln?.project || 'Module',
+          module_name: currentVuln?.application || 'Main',
+          repository_url: '',
+          branch: 'main',
+          package_location: 'package.json',
+          direct_dependency: currentVuln?.direct ?? true,
+          scope: 'runtime',
+          detection_method: 'CycloneDX',
+          confidence: 1.0,
+          version: currentVuln?.version || currentVuln?.affectedVersions || '1.0.0',
+          purl: currentVuln?.purl || '',
+          first_detected_at: currentVuln?.firstDetected || null,
+          last_detected_at: currentVuln?.lastDetected || null,
+          status: 'Active',
+        },
+      ],
+    });
+    setLoadingDrawer(false);
+  };
+
+  const filteredUsages = useMemo(() => {
+    if (!drawerData?.usages) return [];
+    if (!drawerFilter.trim()) return drawerData.usages;
+    const q = drawerFilter.toLowerCase();
+    return drawerData.usages.filter((u) =>
+      (u.application_name || '').toLowerCase().includes(q) ||
+      (u.module_name || '').toLowerCase().includes(q) ||
+      (u.version || '').toLowerCase().includes(q) ||
+      (u.package_location || '').toLowerCase().includes(q) ||
+      (u.scope || '').toLowerCase().includes(q)
+    );
+  }, [drawerData, drawerFilter]);
 
   // Helper for CSV escaping
   const csvEscape = (val: unknown) => {
@@ -403,21 +592,21 @@ export const Vulnerabilities: React.FC = () => {
     switch (severity) {
       case 'Critical':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
             Critical
           </span>
         );
       case 'High':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-orange-50 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-200/80 dark:border-orange-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-700 dark:bg-orange-950/60 dark:text-orange-300 border border-orange-200/80 dark:border-orange-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
             High
           </span>
         );
       case 'Medium':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
             Medium
           </span>
@@ -425,7 +614,7 @@ export const Vulnerabilities: React.FC = () => {
       case 'Low':
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200/80 dark:border-sky-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200/80 dark:border-sky-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
             Low
           </span>
@@ -442,13 +631,25 @@ export const Vulnerabilities: React.FC = () => {
     return <span className={`font-mono font-bold text-xs ${colorClass}`}>{cvss.toFixed(1)}</span>;
   };
 
-  const renderStatusBadge = (status: string) => {
+  const renderStatusBadge = (status: string, v?: Vulnerability) => {
+    if (v && ((status === 'Closed' || status === 'Resolved' || status === 'Fixed') &&
+      ((v.justification && v.justification.toLowerCase().includes('auto-closed')) || (v as any).owner === 'SYSTEM_AUTO_CLOSURE'))) {
+      return (
+        <span
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200/80 dark:border-purple-900/50"
+          title={v.justification || 'Automatically closed by remediation in subsequent scan'}
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-purple-500" />
+          Auto-Closed
+        </span>
+      );
+    }
     switch (status) {
       case 'Closed':
       case 'Resolved':
       case 'Fixed':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             {status}
           </span>
@@ -456,14 +657,14 @@ export const Vulnerabilities: React.FC = () => {
       case 'Accepted':
       case 'Risk Accepted':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200/80 dark:border-blue-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200/80 dark:border-blue-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
             Accepted
           </span>
         );
       case 'In Progress':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-900/50 whitespace-nowrap">
             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
             In Progress
           </span>
@@ -471,7 +672,7 @@ export const Vulnerabilities: React.FC = () => {
       case 'Open':
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
             Open
           </span>
@@ -483,21 +684,21 @@ export const Vulnerabilities: React.FC = () => {
     switch (vex) {
       case 'affected':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200/80 dark:border-rose-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
             Affected
           </span>
         );
       case 'not_affected':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200/80 dark:border-emerald-900/50 whitespace-nowrap">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
             Not Affected
           </span>
         );
       case 'fixed':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200/80 dark:border-sky-900/50">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300 border border-sky-200/80 dark:border-sky-900/50">
             <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
             Fixed
           </span>
@@ -505,9 +706,12 @@ export const Vulnerabilities: React.FC = () => {
       case 'under_investigation':
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/50">
+          <span
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200/80 dark:border-amber-900/50 whitespace-nowrap"
+            title="Under Investigation"
+          >
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            Under Investigation
+            Investigating
           </span>
         );
     }
@@ -573,11 +777,10 @@ export const Vulnerabilities: React.FC = () => {
           {/* Card 1: ALL SEVERITIES */}
           <div
             onClick={() => setSelectedSeverity('All')}
-            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-              selectedSeverity === 'All'
+            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'All'
                 ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30 ring-2 ring-blue-500/20 shadow-xs'
                 : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 hover:border-gray-300 dark:hover:border-gray-700'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500" />
@@ -593,11 +796,10 @@ export const Vulnerabilities: React.FC = () => {
           {/* Card 2: CRITICAL */}
           <div
             onClick={() => setSelectedSeverity('Critical')}
-            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-              selectedSeverity === 'Critical'
+            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Critical'
                 ? 'border-rose-600 bg-rose-50/90 dark:bg-rose-950/60 ring-2 ring-rose-500/20 shadow-xs'
                 : 'border-rose-200/80 dark:border-rose-900/40 bg-rose-50/30 dark:bg-rose-950/20 hover:border-rose-400 dark:hover:border-rose-800'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-rose-500" />
@@ -613,11 +815,10 @@ export const Vulnerabilities: React.FC = () => {
           {/* Card 3: HIGH */}
           <div
             onClick={() => setSelectedSeverity('High')}
-            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-              selectedSeverity === 'High'
+            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'High'
                 ? 'border-orange-600 bg-orange-50/90 dark:bg-orange-950/60 ring-2 ring-orange-500/20 shadow-xs'
                 : 'border-orange-200/80 dark:border-orange-900/40 bg-orange-50/30 dark:bg-orange-950/20 hover:border-orange-400 dark:hover:border-orange-800'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-orange-500" />
@@ -633,11 +834,10 @@ export const Vulnerabilities: React.FC = () => {
           {/* Card 4: MEDIUM */}
           <div
             onClick={() => setSelectedSeverity('Medium')}
-            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-              selectedSeverity === 'Medium'
+            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Medium'
                 ? 'border-amber-600 bg-amber-50/90 dark:bg-amber-950/60 ring-2 ring-amber-500/20 shadow-xs'
                 : 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/20 hover:border-amber-400 dark:hover:border-amber-800'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-amber-500" />
@@ -653,11 +853,10 @@ export const Vulnerabilities: React.FC = () => {
           {/* Card 5: LOW */}
           <div
             onClick={() => setSelectedSeverity('Low')}
-            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-              selectedSeverity === 'Low'
+            className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Low'
                 ? 'border-sky-600 bg-sky-50/90 dark:bg-sky-950/60 ring-2 ring-sky-500/20 shadow-xs'
                 : 'border-sky-200/80 dark:border-sky-900/40 bg-sky-50/30 dark:bg-sky-950/20 hover:border-sky-400 dark:hover:border-sky-800'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
               <span className="w-2 h-2 rounded-full bg-sky-500" />
@@ -693,11 +892,10 @@ export const Vulnerabilities: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowFiltersPanel(!showFiltersPanel)}
-              className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-all inline-flex items-center gap-1.5 cursor-pointer ${
-                showFiltersPanel || statusFilter !== 'All' || vexFilter !== 'All'
+              className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-all inline-flex items-center gap-1.5 cursor-pointer ${showFiltersPanel || statusFilter !== 'All' || vexFilter !== 'All'
                   ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400'
                   : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-              }`}
+                }`}
             >
               <Filter className="w-3.5 h-3.5" />
               <span>Filters</span>
@@ -734,6 +932,7 @@ export const Vulnerabilities: React.FC = () => {
                 <option value="Open">Open</option>
                 <option value="In Progress">In Progress</option>
                 <option value="Closed">Closed</option>
+                <option value="Resolved">Resolved (Auto-Closed)</option>
                 <option value="Fixed">Fixed</option>
                 <option value="Accepted">Accepted</option>
               </select>
@@ -775,27 +974,29 @@ export const Vulnerabilities: React.FC = () => {
       {/* Main Vulnerability Table */}
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[1100px]">
+          <table className="w-full text-left text-xs">
             <thead className="bg-gray-50/80 dark:bg-gray-800/70 text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
               <tr>
-                <th className="py-3 px-3.5">CVE ID</th>
-                <th className="py-3 px-3.5">Vulnerability Name</th>
-                <th className="py-3 px-3.5">Application</th>
-                <th className="py-3 px-3.5">Severity</th>
-                <th className="py-3 px-3.5">CVSS Score</th>
-                <th className="py-3 px-3.5">Component + Version</th>
-                <th className="py-3 px-3.5">Project</th>
-                <th className="py-3 px-3.5">Status</th>
-                <th className="py-3 px-3.5">VEX Status</th>
-                <th className="py-3 px-3.5">Fixed Version</th>
-                <th className="py-3 px-3.5 text-center">Actions</th>
+                <th className="py-2.5 px-2">CVE ID</th>
+                <th className="py-2.5 px-2">App</th>
+                <th className="py-2.5 px-2">Vulnerability Name</th>
+                <th className="py-2.5 px-2">Module</th>
+                <th className="py-2.5 px-2">Ownership</th>
+                <th className="py-2.5 px-2">Severity</th>
+                <th className="py-2.5 px-1.5 text-center">CVSS Score</th>
+                <th className="py-2.5 px-2">Component + Version</th>
+                <th className="py-2.5 px-1.5 text-center">Occurrences</th>
+                <th className="py-2.5 px-1.5">Status</th>
+                <th className="py-2.5 px-1.5">VEX Status</th>
+                <th className="py-2.5 px-1.5">Fixed Version</th>
+                <th className="py-2.5 px-1 text-center">Actions</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800/60">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-16 text-center">
+                  <td colSpan={13} className="py-16 text-center">
                     <div className="flex flex-col items-center justify-center max-w-md mx-auto space-y-3">
                       <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-600 dark:text-blue-400 border border-blue-200/80 dark:border-blue-800/60 shadow-2xs">
                         <CheckCircle2 className="w-6 h-6" />
@@ -844,55 +1045,15 @@ export const Vulnerabilities: React.FC = () => {
                       className="hover:bg-blue-50/30 dark:hover:bg-blue-950/20 transition-colors cursor-pointer group"
                     >
                       {/* CVE ID */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
+                      <td className="py-2 px-2 whitespace-nowrap">
                         <span className="font-mono font-bold text-blue-600 dark:text-blue-400 group-hover:underline">
                           {v.cve}
                         </span>
                       </td>
 
-                      {/* Vulnerability Name (Explicit user request) */}
-                      <td className="py-3 px-3.5 max-w-[220px]">
-                        <span
-                          className="font-semibold text-gray-900 dark:text-white line-clamp-1 truncate block"
-                          title={vulnName}
-                        >
-                          {vulnName}
-                        </span>
-                      </td>
-
-                      {/* Application */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5 text-gray-800 dark:text-gray-200">
-                          <Box className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                          <span className="font-medium text-xs">{appName}</span>
-                        </div>
-                      </td>
-
-                      {/* Severity */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        {renderSeverityBadge(v.severity)}
-                      </td>
-
-                      {/* CVSS Score */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        {renderCvssScore(v.cvss)}
-                      </td>
-
-                      {/* Component + Version */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        <div>
-                          <span className="font-mono font-semibold text-gray-900 dark:text-white block">
-                            {v.package}
-                          </span>
-                          <span className="font-mono text-[11px] text-gray-500 dark:text-gray-400">
-                            {v.version || v.affectedVersions || '—'}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Project (Clicking filters to project) */}
+                      {/* App (was Project) */}
                       <td
-                        className="py-3 px-3.5 whitespace-nowrap"
+                        className="py-2 px-2 whitespace-nowrap"
                         onClick={(e) => {
                           e.stopPropagation();
                           if (v.scanId) {
@@ -903,48 +1064,128 @@ export const Vulnerabilities: React.FC = () => {
                         }}
                       >
                         <span
-                          className="font-mono text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:underline cursor-pointer"
-                          title={`Filter by project: ${v.project}`}
+                          className="font-mono font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer truncate max-w-[120px] block"
+                          title={`Filter by app: ${v.project}`}
                         >
                           {v.project}
                         </span>
                       </td>
 
+                      {/* Vulnerability Name (Explicit user request) */}
+                      <td className="py-2 px-2 max-w-[140px] lg:max-w-[180px]">
+                        <span
+                          className="font-semibold text-gray-900 dark:text-white line-clamp-1 truncate block"
+                          title={vulnName}
+                        >
+                          {vulnName}
+                        </span>
+                      </td>
+
+                      {/* Module (was Application) */}
+                      <td className="py-2 px-2 whitespace-nowrap">
+                        <div className="flex items-center gap-1 text-gray-800 dark:text-gray-200">
+                          <Box className="w-3 h-3 text-blue-500 shrink-0" />
+                          <span className="font-medium text-xs truncate max-w-[110px]" title={v.application || appName}>
+                            {v.application || appName}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Ownership (Business Owner only) */}
+                      <td className="py-2 px-2 whitespace-nowrap">
+                        <span className="text-gray-700 dark:text-gray-300 font-medium text-xs truncate max-w-[120px] block" title={resolveBizOwner(v)}>
+                          {resolveBizOwner(v)}
+                        </span>
+                      </td>
+
+                      {/* Severity */}
+                      <td className="py-2 px-1.5 whitespace-nowrap">
+                        {renderSeverityBadge(v.severity)}
+                      </td>
+
+                      {/* CVSS Score */}
+                      <td className="py-2 px-1.5 whitespace-nowrap text-center">
+                        {renderCvssScore(v.cvss)}
+                      </td>
+
+                      {/* Component + Version */}
+                      <td className="py-2 px-2 whitespace-nowrap">
+                        <div>
+                          <span className="font-mono font-semibold text-gray-900 dark:text-white block truncate max-w-[130px]">
+                            {v.package}
+                          </span>
+                          <span className="font-mono text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-[130px] block">
+                            {v.version || v.affectedVersions || '—'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Occurrences (SC-03) */}
+                      <td
+                        className="py-2 px-1.5 whitespace-nowrap text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {(() => {
+                          const stats = occurrenceStats[(v.package || '').toLowerCase()];
+                          const localCount = (components || []).filter(
+                            (c) => c.name.toLowerCase() === (v.package || '').toLowerCase()
+                          ).length;
+                          const count = stats?.count ?? (localCount > 0 ? localCount : 1);
+                          const appsCount = stats?.appsCount ?? 1;
+
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenOccurrenceDrawer(v.package, v.purl, v)}
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all cursor-pointer shadow-2xs group"
+                              title={`View ${count} occurrence instance${count === 1 ? '' : 's'} across applications`}
+                            >
+                              <Layers className="w-3 h-3 text-indigo-500 group-hover:scale-110 transition-transform" />
+                              <span className="font-mono font-bold">{count}</span>
+                              {appsCount > 1 ? (
+                                <span className="text-[9px] bg-indigo-200/60 dark:bg-indigo-900/60 px-1 py-0.2 rounded font-medium text-indigo-800 dark:text-indigo-200">
+                                  {appsCount}a
+                                </span>
+                              ) : (
+                                <span className="text-[9px] opacity-75">inst</span>
+                              )}
+                            </button>
+                          );
+                        })()}
+                      </td>
+
                       {/* Status */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
-                        {renderStatusBadge(v.status)}
+                      <td className="py-2 px-1.5 whitespace-nowrap">
+                        {renderStatusBadge(v.status, v)}
                       </td>
 
                       {/* VEX Status */}
-                      <td className="py-3 px-3.5 whitespace-nowrap">
+                      <td className="py-2 px-1.5 whitespace-nowrap">
                         {renderVexBadge(v.vexStatus)}
                       </td>
 
                       {/* Fixed Version */}
-                      <td className="py-3 px-3.5 whitespace-nowrap font-mono text-gray-700 dark:text-gray-300">
+                      <td className="py-2 px-1.5 whitespace-nowrap font-mono text-[11px] text-gray-700 dark:text-gray-300">
                         {v.fixVersion && v.fixVersion !== '*' ? v.fixVersion : '—'}
                       </td>
 
-                      {/* Actions (3 dots dropdown with View Details and Update Status) */}
+                      {/* Actions: View Details via Eye icon */}
                       <td
-                        className="py-3 px-3.5 whitespace-nowrap text-center"
+                        className="py-2 px-1 whitespace-nowrap text-center"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <VulnerabilityActionMenu
-                          vulnerability={v}
-                          onViewDetails={(vuln) => {
-                            navigate(`/vulnerabilities/${encodeURIComponent(vuln.cve)}`, {
-                              state: { vulnerability: vuln },
-                            });
-                          }}
-                          onUpdateStatus={async (vuln, newStatus, extra) => {
-                            await updateVulnerabilityStatus(vuln.cve, newStatus, {
-                              project: vuln.project,
-                              vexStatus: vuln.vexStatus,
-                              justification: extra?.justification,
-                            });
-                          }}
-                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            navigate(`/vulnerabilities/${encodeURIComponent(v.cve)}`, {
+                              state: { vulnerability: v },
+                            })
+                          }
+                          className="p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 dark:text-gray-400 dark:hover:text-blue-300 transition-colors cursor-pointer"
+                          title={`View details for ${v.cve}`}
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -972,6 +1213,190 @@ export const Vulnerabilities: React.FC = () => {
           />
         </div>
       </div>
+
+      {/* SC-03: Package Occurrence Details Drawer */}
+      {selectedPackageForDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/50 backdrop-blur-xs animate-fadeIn">
+          {/* Backdrop dismiss */}
+          <div
+            className="absolute inset-0 cursor-pointer"
+            onClick={() => setSelectedPackageForDrawer(null)}
+          />
+          <div className="relative bg-white dark:bg-[#111827] border-l border-gray-200 dark:border-gray-800 w-full max-w-2xl sm:max-w-3xl h-full shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-200">
+            {/* Drawer Header */}
+            <div className="p-5 border-b border-gray-200 dark:border-gray-800 flex items-start justify-between gap-4 bg-gray-50/70 dark:bg-gray-900/40">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-900/60 flex items-center justify-center text-indigo-600 dark:text-indigo-400 shrink-0">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-lg font-bold font-mono text-gray-900 dark:text-white">
+                      {selectedPackageForDrawer}
+                    </span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      Occurrence Details
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Cross-application usage distribution across all software inventories and scans
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedPackageForDrawer(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Summary Metrics */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-800 grid grid-cols-3 gap-3 bg-white dark:bg-[#111827]">
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Total Instances
+                </span>
+                <span className="text-xl font-bold font-mono text-indigo-600 dark:text-indigo-400">
+                  {loadingDrawer ? '...' : (drawerData?.occurrence_count ?? 0)}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Applications
+                </span>
+                <span className="text-xl font-bold font-mono text-gray-900 dark:text-white">
+                  {loadingDrawer ? '...' : (drawerData?.applications_count ?? 0)}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Modules
+                </span>
+                <span className="text-xl font-bold font-mono text-gray-900 dark:text-white">
+                  {loadingDrawer ? '...' : (drawerData?.modules_count ?? 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter Toolbar */}
+            <div className="p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/20 flex items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={drawerFilter}
+                  onChange={(e) => setDrawerFilter(e.target.value)}
+                  placeholder="Filter by application, module, version, manifest path..."
+                  className="w-full text-xs pl-9 pr-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                {filteredUsages.length} of {drawerData?.usages?.length ?? 0} usages
+              </span>
+            </div>
+
+            {/* Drawer Table Scroll Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {loadingDrawer ? (
+                <div className="py-16 text-center text-gray-500 space-y-3">
+                  <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-xs font-medium">Querying package occurrences across inventories...</p>
+                </div>
+              ) : filteredUsages.length === 0 ? (
+                <div className="py-16 text-center text-gray-400 space-y-2">
+                  <p className="text-sm font-semibold">No occurrence records found</p>
+                  <p className="text-xs text-gray-500">
+                    No matching application modules found for the filter or this package.
+                  </p>
+                </div>
+              ) : (
+                <div className="border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-gray-50 dark:bg-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                      <tr>
+                        <th className="p-3">Application</th>
+                        <th className="p-3">Module</th>
+                        <th className="p-3">Version</th>
+                        <th className="p-3">Scope / Type</th>
+                        <th className="p-3">Manifest Location</th>
+                        <th className="p-3">Detection</th>
+                        <th className="p-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {filteredUsages.map((u, i) => (
+                        <tr key={`${u.application_id}-${u.module_id}-${i}`} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/40">
+                          <td className="p-3">
+                            <span className="font-semibold text-gray-900 dark:text-white block">
+                              {u.application_name || u.application_id || 'Unknown'}
+                            </span>
+                            {u.branch && (
+                              <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                                <GitBranch className="w-3 h-3" /> {u.branch}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 font-mono text-gray-700 dark:text-gray-300">
+                            {u.module_name || u.module_id || '-'}
+                          </td>
+                          <td className="p-3 font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+                            {u.version || '-'}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900">
+                                {u.direct_dependency ? 'Direct' : 'Transitive'}
+                              </span>
+                              <span className="text-[10px] text-gray-500 uppercase font-mono">
+                                {u.scope || 'runtime'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-gray-600 dark:text-gray-400 text-[11px]">
+                            <div className="flex items-center gap-1.5" title={u.package_location || 'manifest'}>
+                              <FileCode className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                              <span className="truncate max-w-[140px]">{u.package_location || 'manifest'}</span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-[10px] text-gray-500 uppercase">
+                            {u.detection_method || 'cyclonedx'}
+                          </td>
+                          <td className="p-3">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${u.status?.toLowerCase() === 'removed'
+                                ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
+                                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
+                              }`}>
+                              {u.status || 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 flex items-center justify-between">
+              <span className="text-xs text-gray-500">
+                Package Occurrence Tracking &bull; Cross-application dependency inventory
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedPackageForDrawer(null)}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

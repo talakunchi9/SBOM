@@ -51,7 +51,7 @@ export const TopHeader: React.FC<TopHeaderProps> = () => {
       case '/software-inventory/components':
         return 'Software Inventory';
       case '/software-inventory/projects':
-        return 'Projects & Microservices';
+        return 'Applications & Microservices';
       case '/software-inventory/artifacts':
         return 'Software Inventory';
       case '/vulnerabilities':

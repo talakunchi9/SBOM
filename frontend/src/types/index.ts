@@ -24,6 +24,7 @@ export interface Project {
   branch?: string;
   tags?: string[];
   status: 'Audited' | 'Scan Pending' | 'Blocked';
+  lifecycleStatus?: 'Active' | 'Inactive' | string;
 }
 
 export interface Vulnerability {
@@ -63,6 +64,8 @@ export interface Vulnerability {
   sbomVersion?: string;
   statusChanges?: string;
   owner?: string;
+  businessOwner?: string;
+  justification?: string;
 }
 
 export type ComponentFieldType =
@@ -249,6 +252,8 @@ export interface ScanJob {
   createdBy?: string;
   requestedBy?: string;
   description?: string;
+  lifecycleStatus?: 'Active' | 'Decommissioned' | 'Inactive' | string;
+  businessOwner?: string;
 }
 
 export interface UserAccount {

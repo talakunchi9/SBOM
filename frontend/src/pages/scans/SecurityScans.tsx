@@ -43,7 +43,7 @@ import {
 import { useAppState } from '../../context/AppStateContext';
 import type { ScanJob } from '../../types';
 import { ProjectApplicationSelect } from '../../components/common/ProjectApplicationSelect';
-import type { CatalogRecord } from '../../api/client';
+import { checkScanDuplicate, type CatalogRecord } from '../../api/client';
 import {
   filesFromDataTransfer,
   fileTypesIn,
@@ -61,14 +61,14 @@ import {
 import { classifyBulkCsv } from './bulkRows';
 import * as XLSX from 'xlsx';
 import { PipelineGrid, ScanResultDetails } from './ScanResultDetails';
-import { displayStatus, formatDuration, formatEventTime, isOpenStatus, stageLabel } from './scanProgress';
+import { displayStatus, formatDuration, formatEventTime, formatScanTimestamp12h, isOpenStatus, stageLabel } from './scanProgress';
 import { ScanActionMenu } from './ScanActionMenu';
 import { TablePagination } from '../../components/common/TablePagination';
 
 export const SecurityScans: React.FC = () => {
   const { tab } = useParams<{ tab?: string }>();
   const navigate = useNavigate();
-  const { startScan, rescanScan, cancelScan, activeScan, scansHistory, exportSBOM, addToast } = useAppState();
+  const { startScan, rescanScan, cancelScan, activeScan, scansHistory, exportSBOM, updateApplicationLifecycle, addToast } = useAppState();
 
   // Active sub-page tab: 'table' | 'new' | 'live' | 'history' | 'schedules'
   const validTabs = ['table', 'new', 'live', 'history', 'schedules'] as const;
@@ -142,6 +142,20 @@ export const SecurityScans: React.FC = () => {
   const appService = selectedApplication?.name || '';
   const [releaseVersion, setReleaseVersion] = useState('v1.0.0');
   const [description, setDescription] = useState('');
+  const [businessOwner, setBusinessOwner] = useState('');
+  const [technicalOwner, setTechnicalOwner] = useState('');
+  const [developmentType, setDevelopmentType] = useState<'In-house' | 'Outsourced' | 'Vendor'>('In-house');
+  const [vendorName, setVendorName] = useState('');
+  const [moduleType, setModuleType] = useState('Microservice');
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    isOpen: boolean;
+    appName: string;
+    moduleName: string;
+    version: string;
+    scannedAt: string;
+    duplicateType?: string;
+    fileName?: string;
+  } | null>(null);
 
   // Source Type: 'local' | 'git' | 'bulk'
   const [sourceType, setSourceType] = useState<'local' | 'git' | 'bulk'>('local');
@@ -194,6 +208,32 @@ export const SecurityScans: React.FC = () => {
     if (folderInputRef.current) folderInputRef.current.value = '';
     if (modalFileInputRef.current) modalFileInputRef.current.value = '';
     if (modalFolderInputRef.current) modalFolderInputRef.current.value = '';
+  };
+
+  const checkDuplicateForFile = async (fileToCheck: File) => {
+    try {
+      const dup = await checkScanDuplicate({
+        applicationName: projectName.trim(),
+        moduleName: appService.trim(),
+        version: releaseVersion.trim(),
+        file: fileToCheck,
+      });
+      if (dup?.is_duplicate) {
+        setDuplicateWarning({
+          isOpen: true,
+          appName: dup.application_name || projectName.trim() || 'Existing Application',
+          moduleName: dup.module_name || appService.trim() || 'Existing Module',
+          version: dup.version || releaseVersion.trim() || 'v1.0.0',
+          scannedAt: dup.completed_at ? formatScanTimestamp12h(dup.completed_at) : 'Previously',
+          duplicateType: dup.duplicate_type,
+          fileName: fileToCheck.name,
+        });
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    return false;
   };
 
   const openFolderPicker = () => {
@@ -285,6 +325,7 @@ export const SecurityScans: React.FC = () => {
       } else if (name.includes('spdx')) {
         setSbomFormat('SPDX');
       }
+      checkDuplicateForFile(droppedFile);
       return;
     }
     useFolderManifests(items);
@@ -494,6 +535,12 @@ export const SecurityScans: React.FC = () => {
     setSelectedApplication(null);
     setReleaseVersion('v1.0.0');
     setDescription('');
+    setBusinessOwner('');
+    setTechnicalOwner('');
+    setDevelopmentType('In-house');
+    setVendorName('');
+    setModuleType('Microservice');
+    setDuplicateWarning(null);
     setSourceType('local');
     setSelectedFolder('');
     setLocalFile(null);
@@ -599,21 +646,55 @@ export const SecurityScans: React.FC = () => {
   // Submission State
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Advance to Review
-  const handleProceedToReview = (e: React.FormEvent) => {
+  // Advance to Review with Duplicate Preflight Check
+  const handleProceedToReview = async (e: React.FormEvent) => {
     e.preventDefault();
     if (sourceType !== 'bulk') {
-      if (!selectedProject?.id) {
-        addToast({ type: 'warning', title: 'Validation Error', message: 'Project Name is required.' });
+      if (!projectName.trim() && !selectedProject?.id) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Application Name is required.' });
         return;
       }
-      if (!selectedApplication?.id) {
-        addToast({ type: 'warning', title: 'Validation Error', message: 'Application / Service is required.' });
+      if (!appService.trim() && !selectedApplication?.id) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Module / Service is required.' });
         return;
       }
       if (!releaseVersion || !releaseVersion.trim()) {
         addToast({ type: 'warning', title: 'Validation Error', message: 'Release / Version is required (e.g. v1.0.0).' });
         return;
+      }
+      if (!businessOwner || !businessOwner.trim()) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Business Owner is required (e.g. Finance Team).' });
+        return;
+      }
+      if (!technicalOwner || !technicalOwner.trim()) {
+        addToast({ type: 'warning', title: 'Validation Error', message: 'Technical Owner is required (e.g. @core-devs / Alice).' });
+        return;
+      }
+      // Preflight duplicate check before proceeding
+      try {
+        const dup = await checkScanDuplicate({
+          applicationName: projectName.trim(),
+          moduleName: appService.trim(),
+          version: releaseVersion.trim(),
+          file: localFile,
+          folderFiles: localFolder,
+          repositoryUrl: sourceType === 'git' ? gitUrl.trim() : undefined,
+          branch: sourceType === 'git' ? gitBranch.trim() : undefined,
+        });
+        if (dup?.is_duplicate) {
+          setDuplicateWarning({
+            isOpen: true,
+            appName: dup.application_name || projectName.trim(),
+            moduleName: dup.module_name || appService.trim(),
+            version: dup.version || releaseVersion.trim(),
+            scannedAt: dup.completed_at ? formatScanTimestamp12h(dup.completed_at) : 'Previously',
+            duplicateType: dup.duplicate_type,
+            fileName: localFile?.name || (localFolder.length > 0 ? `${localFolder.length} files` : undefined),
+          });
+          return;
+        }
+      } catch (err) {
+        // Continue if preflight check is unavailable
       }
     }
     if (sourceType === 'local') {
@@ -703,6 +784,14 @@ export const SecurityScans: React.FC = () => {
       addToast({ type: 'warning', title: 'Repositories required', message: 'Enter one https://github.com/owner/repo URL per line.' });
       return;
     }
+    if (sourceType !== 'bulk' && (!businessOwner || !businessOwner.trim())) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Business Owner is required (e.g. Finance Team).' });
+      return;
+    }
+    if (sourceType !== 'bulk' && (!technicalOwner || !technicalOwner.trim())) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Technical Owner is required (e.g. @core-devs / Alice).' });
+      return;
+    }
 
     setIsSubmitting(true);
     const sourceDesc =
@@ -751,6 +840,11 @@ export const SecurityScans: React.FC = () => {
         gitUrl,
         gitBranch,
         gitToken,
+        businessOwner,
+        technicalOwner,
+        developmentType,
+        vendorName,
+        moduleType,
       });
 
       setIsSubmitting(false);
@@ -1091,11 +1185,12 @@ export const SecurityScans: React.FC = () => {
               <table className="w-full text-left text-xs min-w-[900px]">
                 <thead>
                   <tr className="bg-slate-50/90 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200/80 dark:border-slate-700/80">
-                    <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">PROJECT NAME</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
+                    <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">MODULE NAME</th>
                     <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN DATE</th>
                     <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN STATUS</th>
                     <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN TYPE</th>
+                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">LIFECYCLE STATUS</th>
                     <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">CREATED BY</th>
                     <th className="py-2.5 pr-4 pl-3 font-bold uppercase tracking-wider text-[11px] text-right whitespace-nowrap">ACTIONS</th>
                   </tr>
@@ -1104,20 +1199,21 @@ export const SecurityScans: React.FC = () => {
                   {filteredScans.length > 0 ? (
                     paginatedScans.map((s) => (
                       <tr key={s.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
-                        {/* PROJECT NAME */}
+                        {/* APPLICATION NAME */}
                         <td className="py-3 pl-4 pr-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <FolderGit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <span
                               onClick={() => setSelectedScanId(s.id)}
                               className="font-bold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+                              title={`View ${s.targetProject} details`}
                             >
                               {s.targetProject}
                             </span>
                           </div>
                         </td>
 
-                        {/* APPLICATION NAME */}
+                        {/* MODULE NAME */}
                         <td className="py-3 px-3 whitespace-nowrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
                             {s.appService || '—'}
@@ -1126,7 +1222,7 @@ export const SecurityScans: React.FC = () => {
 
                         {/* SCAN DATE */}
                         <td className="py-3 px-3 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">
-                          {s.timestamp}
+                          {formatScanTimestamp12h(s.timestamp)}
                         </td>
 
                         {/* SCAN STATUS */}
@@ -1164,6 +1260,25 @@ export const SecurityScans: React.FC = () => {
                           </span>
                         </td>
 
+                        {/* LIFECYCLE STATUS */}
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          {(() => {
+                            const statusStr = (s.lifecycleStatus || 'Active').trim();
+                            const isDecom = statusStr.toLowerCase() === 'decommissioned' || statusStr.toLowerCase() === 'inactive';
+                            const isActive = !isDecom;
+                            return (
+                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                isActive
+                                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
+                                  : 'bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
+                              }`}>
+                                <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-500'}`} />
+                                {isActive ? 'Active' : 'Decommissioned'}
+                              </span>
+                            );
+                          })()}
+                        </td>
+
                         {/* SCAN REQUESTED BY */}
                         <td className="py-3 px-3 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
@@ -1184,6 +1299,7 @@ export const SecurityScans: React.FC = () => {
                               onViewDetails={(scan) => setSelectedScanId(scan.id)}
                               onExport={(format, scanId) => exportSBOM(format, scanId)}
                               onRescan={handleRescan}
+                              onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
                               rescanning={rescanningId === s.id}
                             />
                           </div>
@@ -1192,7 +1308,7 @@ export const SecurityScans: React.FC = () => {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={7} className="py-8 px-4 text-center">
+                      <td colSpan={8} className="py-8 px-4 text-center">
                         <div className="flex flex-col items-center justify-center space-y-2">
                           <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center justify-center shadow-2xs">
                             <Search className="w-5 h-5" />
@@ -1288,10 +1404,10 @@ export const SecurityScans: React.FC = () => {
                   <ProjectApplicationSelect
                     variant="scan"
                     required={sourceType !== 'bulk'}
-                    projectLabel="PROJECT NAME"
-                    applicationLabel="APPLICATION / SERVICE"
-                    projectHint="A short, descriptive name for your project."
-                    applicationHint="The application or service name."
+                    projectLabel="APPLICATION NAME"
+                    applicationLabel="MODULE / SERVICE"
+                    projectHint="Registered software application (e.g. PayFlow, Customer Portal)."
+                    applicationHint="Module or microservice (e.g. auth-service, payment-api)."
                     value={{ project: selectedProject, application: selectedApplication }}
                     onChange={({ project, application }) => {
                       setSelectedProject(project);
@@ -1301,17 +1417,97 @@ export const SecurityScans: React.FC = () => {
 
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      RELEASE / VERSION
+                      RELEASE / VERSION {sourceType !== 'bulk' && <span className="text-red-500">*</span>}
                     </label>
                     <input
+                      id="release-version-input"
                       type="text"
+                      required={sourceType !== 'bulk'}
                       value={releaseVersion}
                       onChange={(e) => setReleaseVersion(e.target.value)}
                       placeholder="e.g. v1.0.0"
-                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500 font-mono"
                     />
                     <p className="text-[10px] text-gray-400 mt-1">Application version or release tag.</p>
                   </div>
+                </div>
+
+                {/* Ownership & Development Type */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      BUSINESS OWNER {sourceType !== 'bulk' && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required={sourceType !== 'bulk'}
+                      value={businessOwner}
+                      onChange={(e) => setBusinessOwner(e.target.value)}
+                      placeholder="e.g. Finance Team"
+                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Department or product team.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      TECHNICAL OWNER {sourceType !== 'bulk' && <span className="text-red-500">*</span>}
+                    </label>
+                    <input
+                      type="text"
+                      required={sourceType !== 'bulk'}
+                      value={technicalOwner}
+                      onChange={(e) => setTechnicalOwner(e.target.value)}
+                      placeholder="e.g. @core-devs / Alice"
+                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Lead engineer, architect, or team tag.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                      DEVELOPMENT TYPE
+                    </label>
+                    <select
+                      value={developmentType}
+                      onChange={(e) => setDevelopmentType(e.target.value as any)}
+                      className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="In-house">In-house</option>
+                      <option value="Outsourced">Outsourced</option>
+                      <option value="Vendor">Vendor</option>
+                    </select>
+                  </div>
+                  {developmentType === 'Vendor' ? (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                        VENDOR NAME
+                      </label>
+                      <input
+                        type="text"
+                        value={vendorName}
+                        onChange={(e) => setVendorName(e.target.value)}
+                        placeholder="e.g. Acme Corp / Oracle"
+                        className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                        MODULE TYPE
+                      </label>
+                      <select
+                        value={moduleType}
+                        onChange={(e) => setModuleType(e.target.value)}
+                        className="w-full text-xs px-3 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="Microservice">Microservice</option>
+                        <option value="Frontend">Frontend</option>
+                        <option value="Backend">Backend</option>
+                        <option value="Library">Library</option>
+                        <option value="Mobile">Mobile</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
@@ -1591,6 +1787,7 @@ export const SecurityScans: React.FC = () => {
                               } else if (name.includes('spdx')) {
                                 setSbomFormat('SPDX');
                               }
+                              checkDuplicateForFile(file);
                               return;
                             }
                             const valid = picked.filter((f) => f.size > 0);
@@ -2158,6 +2355,14 @@ export const SecurityScans: React.FC = () => {
                             <span className="text-gray-500">Release Version:</span>
                             <span className="font-mono font-semibold text-gray-900 dark:text-white">{releaseVersion}</span>
                           </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Business Owner:</span>
+                            <span className="font-semibold text-gray-900 dark:text-white">{businessOwner}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Technical Owner:</span>
+                            <span className="font-semibold text-gray-900 dark:text-white">{technicalOwner}</span>
+                          </div>
                           <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
                             <span className="text-gray-500 block mb-1">Description:</span>
                             <p className="text-gray-700 dark:text-gray-300 italic">{description || 'No description provided'}</p>
@@ -2694,7 +2899,7 @@ export const SecurityScans: React.FC = () => {
                           {job.status}
                         </span>
                       </td>
-                      <td className="py-3 text-gray-500 dark:text-gray-400">{job.timestamp}</td>
+                      <td className="py-3 text-gray-500 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">{formatScanTimestamp12h(job.timestamp)}</td>
                       <td className="py-3 text-gray-700 dark:text-gray-300 font-medium">
                         {(job as any).requestedBy || (job as any).createdBy || 'Asha Mehta'}
                       </td>
@@ -2743,6 +2948,7 @@ export const SecurityScans: React.FC = () => {
                             onViewDetails={(scan) => setSelectedScanId(scan.id)}
                             onExport={(format, scanId) => exportSBOM(format, scanId)}
                             onRescan={handleRescan}
+                            onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
                             rescanning={rescanningId === job.id}
                           />
                         </div>
@@ -3332,6 +3538,7 @@ export const SecurityScans: React.FC = () => {
                         setSbomFormat('SPDX');
                       }
                       setLocalUploadModalOpen(false);
+                      checkDuplicateForFile(pendingLocalFile);
                       addToast({
                         type: 'success',
                         title: 'File Ready',
@@ -3527,6 +3734,98 @@ export const SecurityScans: React.FC = () => {
         </div>
       )}
 
+      {/* PRE-SCAN DUPLICATE DETECTED WARNING MODAL */}
+      {duplicateWarning?.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-[#111C2E] border border-gray-200 dark:border-gray-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
+
+            {/* CROSS [X] BUTTON TO THROW BACKWARDS */}
+            <button
+              type="button"
+              onClick={() => {
+                setDuplicateWarning(null);
+                const el = document.getElementById('release-version-input');
+                if (el) el.focus();
+              }}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-700 dark:hover:text-white p-1 rounded-lg cursor-pointer"
+              title="Close and go back to form"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 text-amber-600 dark:text-amber-400 mb-3">
+              <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800">
+                <AlertTriangle className="w-6 h-6 shrink-0" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                  {duplicateWarning.duplicateType === 'EXACT_FILE_EXISTS'
+                    ? 'Duplicate File Detected'
+                    : 'Duplicate Scan Detected'}
+                </h3>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  {duplicateWarning.duplicateType === 'EXACT_FILE_EXISTS'
+                    ? 'Identical file content was already scanned'
+                    : 'Identical scan record already exists in database'}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-600 dark:text-gray-300 mb-4">
+              {duplicateWarning.duplicateType === 'EXACT_FILE_EXISTS'
+                ? 'This exact file has already been uploaded and analyzed. Duplicate files cannot be rescanned without modifications:'
+                : 'This exact application version and content has already been scanned. Duplicate scans cannot be submitted as-is:'}
+            </p>
+
+            {/* MATCHED VALUES SUMMARY */}
+            <div className="bg-gray-50 dark:bg-gray-900/60 rounded-xl p-3.5 space-y-2 text-xs border border-gray-100 dark:border-gray-800 font-mono mb-4">
+              {duplicateWarning.fileName && (
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400 text-[11px]">Uploaded File:</span>
+                  <span className="font-semibold text-blue-600 dark:text-blue-400 truncate max-w-[200px]">{duplicateWarning.fileName}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-[11px]">Application:</span>
+                <span className="font-semibold text-gray-900 dark:text-white">{duplicateWarning.appName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-[11px]">Module / Service:</span>
+                <span className="font-semibold text-gray-900 dark:text-white">{duplicateWarning.moduleName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-[11px]">Version:</span>
+                <span className="font-semibold text-amber-600 dark:text-amber-400">{duplicateWarning.version}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-400 text-[11px]">Completed At:</span>
+                <span className="text-gray-500 text-[11px]">{duplicateWarning.scannedAt}</span>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-5">
+              To proceed, please change the <strong>Release / Version</strong> (e.g. bump to a new version) or select an updated file.
+            </p>
+
+            {/* SINGLE GO BACK BUTTON */}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setDuplicateWarning(null);
+                  const el = document.getElementById('release-version-input');
+                  if (el) el.focus();
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 cursor-pointer transition-opacity"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Back to Form</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 };

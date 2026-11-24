@@ -147,14 +147,19 @@ interface AppStateContextType {
     gitUrl?: string;
     gitBranch?: string;
     gitToken?: string;
+    businessOwner?: string;
+    technicalOwner?: string;
+    developmentType?: string;
+    vendorName?: string;
+    moduleType?: string;
   }) => Promise<string>;
   rescanScan: (job: ScanJob) => Promise<void>;
   cancelScan: (job: ScanJob) => Promise<void>;
   
   addProject: (newProj: Partial<Project>) => Promise<void>;
-  addComponent: (newComp: Partial<SBOMComponent>) => Promise<void>;
-  addComponents: (items: Partial<SBOMComponent>[]) => Promise<void>;
-  deleteComponent: (id: string) => Promise<void>;
+  addComponent: (newComp: Partial<SBOMComponent>, reason?: string) => Promise<void>;
+  addComponents: (items: Partial<SBOMComponent>[], reason?: string) => Promise<void>;
+  deleteComponent: (id: string, reason?: string) => Promise<void>;
   addVulnerabilities: (items: Vulnerability[]) => void;
   updateTicketStatus: (id: string, status: RemediationTicket['status']) => void;
   updateVulnerabilityStatus: (
@@ -169,33 +174,19 @@ interface AppStateContextType {
   removeToast: (id: string) => void;
   
   exportSBOM: (format: 'spdx' | 'cyclonedx' | 'csv' | 'json', scanId?: string) => void;
+  updateApplicationLifecycle: (appName: string, status: 'Active' | 'Decommissioned' | 'Inactive') => Promise<void>;
 }
 
 const AppStateContext = createContext<AppStateContextType | undefined>(undefined);
 
 export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [projects, setProjects] = useState<Project[]>(initialProjects);
-  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem('vuln_triage_overrides') || '{}');
-      return initialVulnerabilities.map((v) => {
-        const override = stored[v.cve.toUpperCase()];
-        if (!override) return v;
-        return {
-          ...v,
-          status: override.status || v.status,
-          vexStatus: override.vexStatus || v.vexStatus,
-        };
-      });
-    } catch {
-      return initialVulnerabilities;
-    }
-  });
-  const [components, setComponents] = useState<SBOMComponent[]>(initialComponents);
-  const [tickets, setTickets] = useState<RemediationTicket[]>(initialTickets);
-  const [policies, setPolicies] = useState<PolicyRule[]>(initialPolicies);
-  const [scansHistory, setScansHistory] = useState<ScanJob[]>(initialScansHistory);
-  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>(initialTimelineEvents);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [vulnerabilities, setVulnerabilities] = useState<Vulnerability[]>([]);
+  const [components, setComponents] = useState<SBOMComponent[]>([]);
+  const [tickets, setTickets] = useState<RemediationTicket[]>([]);
+  const [policies, setPolicies] = useState<PolicyRule[]>([]);
+  const [scansHistory, setScansHistory] = useState<ScanJob[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
   const [users] = useState<UserAccount[]>(initialUsers);
 
   // UI state
@@ -297,11 +288,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             tags: p.tags || [],
             status: 'Audited',
           }));
-          setProjects((prev) => {
-            const seen = new Set(prev.map((item) => item.name.toLowerCase()));
-            const fresh = mappedProjs.filter((item) => !seen.has(item.name.toLowerCase()));
-            return [...prev, ...fresh];
-          });
+          setProjects(mappedProjs);
         }
 
         if (scans?.length) {
@@ -345,8 +332,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         if (!cancelled && inventory.length) {
           const saved = inventory.map(api.mapInventoryComponent);
-          const ids = new Set(saved.map((component) => component.id));
-          setComponents((prev) => [...saved, ...prev.filter((component) => !ids.has(component.id))]);
+          setComponents((prev) => mergeByPackage(prev, saved));
         }
         if (!cancelled) {
           try {
@@ -361,6 +347,8 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
                     ...v,
                     status: (item.status as any) || v.status,
                     vexStatus: (item.vex_status as any) || v.vexStatus,
+                    justification: item.justification || v.justification,
+                    owner: item.owner || v.owner,
                   };
                 })
               );
@@ -447,6 +435,11 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     gitUrl?: string;
     gitBranch?: string;
     gitToken?: string;
+    businessOwner?: string;
+    technicalOwner?: string;
+    developmentType?: string;
+    vendorName?: string;
+    moduleType?: string;
   }) => {
     setSystemStatus(prev => ({ ...prev, scans: 'queued' }));
     let createdId = '';
@@ -469,6 +462,13 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         params.releaseTag || 'UNKNOWN',
         { projectId: params.projectId, applicationId: params.applicationId },
         params.description,
+        {
+          businessOwner: params.businessOwner,
+          technicalOwner: params.technicalOwner,
+          developmentType: params.developmentType,
+          vendorName: params.vendorName,
+          moduleType: params.moduleType,
+        },
       );
       createdId = created.scan_id;
       createdStatus = created.status || createdStatus;
@@ -489,6 +489,11 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         projectId: params.projectId,
         applicationId: params.applicationId,
         description: params.description,
+        businessOwner: params.businessOwner,
+        technicalOwner: params.technicalOwner,
+        developmentType: params.developmentType,
+        vendorName: params.vendorName,
+        moduleType: params.moduleType,
       });
       createdId = created.scan_id;
       createdStatus = created.status || createdStatus;
@@ -705,6 +710,25 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           announce(finished, `${counts.components} components, ${counts.cves} CVEs.`, 'success');
         }
         setLatestScanId(job.id);
+        try {
+          const triage = await api.listVulnerabilityTriage();
+          if (triage?.length) {
+            const map = new Map(triage.map((t) => [t.cve.toUpperCase(), t]));
+            setVulnerabilities((prev) =>
+              prev.map((v) => {
+                const item = map.get(v.cve.toUpperCase());
+                if (!item) return v;
+                return {
+                  ...v,
+                  status: (item.status as any) || v.status,
+                  vexStatus: (item.vex_status as any) || v.vexStatus,
+                  justification: item.justification || v.justification,
+                  owner: item.owner || v.owner,
+                };
+              })
+            );
+          }
+        } catch {}
       } catch {
         loadedResults.current.delete(job.id);
       }
@@ -849,7 +873,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setComponents((prev) => [...comps, ...prev.filter((component) => !ids.has(component.id))]);
   };
 
-  const addComponents = async (items: Partial<SBOMComponent>[]) => {
+  const addComponents = async (items: Partial<SBOMComponent>[], reason?: string) => {
     if (!items.length) return;
     const saved = await api.createInventoryComponents(items.map((item) => ({
       project: item.project || '',
@@ -869,12 +893,12 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       supplier: item.supplier,
       file_name: item.fileName,
       created_by: item.createdBy,
-    })));
+    })), reason);
     rememberComponents(saved.map(api.mapInventoryComponent));
   };
 
-  const addComponent = async (newComp: Partial<SBOMComponent>) => {
-    await addComponents([newComp]);
+  const addComponent = async (newComp: Partial<SBOMComponent>, reason?: string) => {
+    await addComponents([newComp], reason);
     const name = newComp.name || 'new-package';
     const version = newComp.version || '1.0.0';
     addToast({
@@ -884,18 +908,24 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     });
   };
 
-  const deleteComponent = async (id: string) => {
+  const deleteComponent = async (id: string, reason?: string) => {
     try {
-      await api.deleteInventoryComponent(id);
-    } catch (err) {
-      console.warn('Backend delete failed, removing locally', err);
+      await api.deleteInventoryComponent(id, reason);
+      setComponents((prev) => prev.filter((c) => c.id !== id));
+      addToast({
+        type: 'info',
+        title: 'Component Removed',
+        message: reason ? `Removed: ${reason}` : 'The inventory item was removed.',
+      });
+    } catch (err: any) {
+      console.error('Backend delete failed:', err);
+      addToast({
+        type: 'error',
+        title: 'Removal Failed',
+        message: err?.message || 'Could not delete component from database.',
+      });
+      throw err;
     }
-    setComponents((prev) => prev.filter((c) => c.id !== id));
-    addToast({
-      type: 'info',
-      title: 'Component Removed',
-      message: 'The inventory item was removed.',
-    });
   };
 
   const addVulnerabilities = (items: Vulnerability[]) => {
@@ -985,6 +1015,39 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return p;
       })
     );
+  };
+
+  const updateApplicationLifecycle = async (appName: string, status: 'Active' | 'Decommissioned' | 'Inactive') => {
+    try {
+      await api.updateApplicationLifecycleStatus(appName, status);
+      setScansHistory((prev) =>
+        prev.map((s) =>
+          s.targetProject.toLowerCase() === appName.toLowerCase()
+            ? { ...s, lifecycleStatus: status }
+            : s
+        )
+      );
+      setProjects((prev) =>
+        prev.map((p) =>
+          p.name.toLowerCase() === appName.toLowerCase()
+            ? { ...p, lifecycleStatus: status }
+            : p
+        )
+      );
+      addToast({
+        type: 'success',
+        title: 'Lifecycle Status Updated',
+        message: `Application "${appName}" marked as ${status}.`,
+      });
+    } catch (err: any) {
+      console.error('Failed to update application lifecycle status', err);
+      addToast({
+        type: 'error',
+        title: 'Update Failed',
+        message: err?.message || 'Could not update lifecycle status in the database.',
+      });
+      throw err;
+    }
   };
 
   const exportSBOM = (format: 'spdx' | 'cyclonedx' | 'csv' | 'json', scanId?: string) => {
@@ -1240,6 +1303,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         addToast,
         removeToast,
         exportSBOM,
+        updateApplicationLifecycle,
       }}
     >
       {children}

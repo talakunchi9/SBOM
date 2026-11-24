@@ -14,6 +14,7 @@ interface SearchableSelectProps {
   onLoadMore?: () => void;
   onCreate?: (name: string) => Promise<void> | void;
   allowCreate?: boolean;
+  freeform?: boolean;
   creating?: boolean;
   loading?: boolean;
   disabled?: boolean;
@@ -47,6 +48,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   onLoadMore,
   onCreate,
   allowCreate = false,
+  freeform = false,
   creating = false,
   loading = false,
   disabled = false,
@@ -63,19 +65,18 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
-  const display = open ? (query || value?.name || '') : (value?.name || '');
+  const display = value?.name ?? '';
   const shownPlaceholder = disabled && disabledPlaceholder ? disabledPlaceholder : placeholder;
-  const trimmed = query.trim();
+  const trimmed = display.trim();
   const exactMatch = options.some((option) => option.name.toLowerCase() === trimmed.toLowerCase());
   const canCreate = Boolean(allowCreate && onCreate && trimmed && !exactMatch);
-  const visible = useMemo(() => options, [options]);
+  const visible = useMemo(() => {
+    if (!trimmed) return options;
+    const lower = trimmed.toLowerCase();
+    return options.filter((opt) => opt.name.toLowerCase().includes(lower));
+  }, [options, trimmed]);
   const itemCount = visible.length + (canCreate ? 1 : 0);
-
-  useEffect(() => {
-    if (!open) setQuery(value?.name || '');
-  }, [value, open]);
 
   useEffect(() => {
     setActive(0);
@@ -83,7 +84,9 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
   useEffect(() => {
     const onDoc = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
@@ -91,7 +94,6 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
 
   const select = (option: SearchableSelectOption | null) => {
     onChange(option);
-    setQuery(option?.name || '');
     setOpen(false);
   };
 
@@ -117,8 +119,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
   const openList = () => {
     if (disabled) return;
     setOpen(true);
-    setQuery('');
-    onQueryChange?.('');
+    onQueryChange?.(display);
     onOpen?.();
   };
 
@@ -151,10 +152,19 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           onClick={openList}
           onChange={(event) => {
             const next = event.target.value;
-            setQuery(next);
             setOpen(true);
             onQueryChange?.(next);
-            if (value && next.trim() !== '' && next !== value.name) onChange(null);
+            if (freeform) {
+              const trimmedNext = next.trim();
+              if (!trimmedNext) {
+                onChange(null);
+              } else {
+                const match = options.find((opt) => opt.name.toLowerCase() === trimmedNext.toLowerCase());
+                onChange(match || { id: '', name: next });
+              }
+            } else {
+              if (value && next.trim() !== '' && next !== value.name) onChange(null);
+            }
           }}
           onKeyDown={(event) => {
             if (disabled) return;
@@ -166,9 +176,12 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
               event.preventDefault();
               setActive((index) => Math.max(index - 1, 0));
             } else if (event.key === 'Enter') {
-              event.preventDefault();
-              if (!open) return;
-              activate(active);
+              if (open && visible.length > 0 && active >= 0 && active < visible.length) {
+                event.preventDefault();
+                activate(active);
+              } else {
+                setOpen(false);
+              }
             } else if (event.key === 'Escape') {
               setOpen(false);
             }
@@ -189,7 +202,7 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
           {loading || creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ChevronDown className="w-3.5 h-3.5" />}
         </span>
       </div>
-      {open && !disabled && (
+      {open && !disabled && (visible.length > 0 || canCreate) && (
         <div
           id={listId}
           role="listbox"
@@ -206,41 +219,38 @@ export const SearchableSelect: React.FC<SearchableSelectProps> = ({
                 active === 0 ? 'bg-blue-50 dark:bg-blue-950/40' : ''
               }`}
               onMouseEnter={() => setActive(0)}
-              onClick={() => void commitCreate()}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                void commitCreate();
+              }}
             >
               {creating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
               <span>Add “{trimmed}”</span>
             </button>
           ) : null}
-          {loading && visible.length === 0 && !canCreate ? (
-            <div className="px-3 py-2 text-xs text-gray-500 flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Loading…
-            </div>
-          ) : visible.length === 0 && !canCreate ? (
-            <div className="px-3 py-2 text-xs text-gray-500">{error || emptyMessage}</div>
-          ) : (
-            visible.map((option, index) => {
-              const rowIndex = index + (canCreate ? 1 : 0);
-              const selected = value?.id === option.id;
-              return (
-                <button
-                  type="button"
-                  key={option.id}
-                  role="option"
-                  aria-selected={selected}
-                  className={`w-full flex items-center justify-between px-3 py-2 text-left text-xs ${
-                    rowIndex === active ? 'bg-blue-50 dark:bg-blue-950/40' : ''
-                  } ${selected ? 'text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-800 dark:text-gray-100'}`}
-                  onMouseEnter={() => setActive(rowIndex)}
-                  onClick={() => select(option)}
-                >
-                  <span>{option.name}</span>
-                  {selected ? <Check className="w-3.5 h-3.5" /> : null}
-                </button>
-              );
-            })
-          )}
+          {visible.map((option, index) => {
+            const rowIndex = index + (canCreate ? 1 : 0);
+            const selected = Boolean(value?.id === option.id || (value?.name && value.name.toLowerCase() === option.name.toLowerCase()));
+            return (
+              <button
+                type="button"
+                key={option.id}
+                role="option"
+                aria-selected={selected}
+                className={`w-full flex items-center justify-between px-3 py-2 text-left text-xs ${
+                  rowIndex === active ? 'bg-blue-50 dark:bg-blue-950/40' : ''
+                } ${selected ? 'text-blue-700 dark:text-blue-300 font-semibold' : 'text-gray-800 dark:text-gray-100'}`}
+                onMouseEnter={() => setActive(rowIndex)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  select(option);
+                }}
+              >
+                <span>{option.name}</span>
+                {selected ? <Check className="w-3.5 h-3.5" /> : null}
+              </button>
+            );
+          })}
         </div>
       )}
       {error && !open ? <p className="text-[10px] text-red-500 mt-1">{error}</p> : null}
