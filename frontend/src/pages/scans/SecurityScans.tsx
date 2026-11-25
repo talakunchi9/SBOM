@@ -1083,7 +1083,7 @@ export const SecurityScans: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto pb-16 animate-fadeIn">
+    <div className="space-y-6 w-full mx-auto pb-16 animate-fadeIn">
       {/* ========================================================================= */}
       {/* 0. COMPONENTS TABLE SUB-PAGE (DEFAULT VIEW FOR SECURITY SCANS)            */}
       {/* ========================================================================= */}
@@ -1182,17 +1182,17 @@ export const SecurityScans: React.FC = () => {
 
             {/* Table View */}
             <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
-              <table className="w-full text-left text-xs min-w-[900px]">
+              <table className="w-full text-left text-xs min-w-[1200px]">
                 <thead>
                   <tr className="bg-slate-50/90 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200/80 dark:border-slate-700/80">
-                    <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">MODULE NAME</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN DATE</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN STATUS</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN TYPE</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">LIFECYCLE STATUS</th>
-                    <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">CREATED BY</th>
-                    <th className="py-2.5 pr-4 pl-3 font-bold uppercase tracking-wider text-[11px] text-right whitespace-nowrap">ACTIONS</th>
+                    <th className="w-[22%] min-w-[200px] py-3.5 pl-5 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
+                    <th className="w-[14%] min-w-[130px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">MODULE NAME</th>
+                    <th className="w-[15%] min-w-[150px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN DATE</th>
+                    <th className="w-[13%] min-w-[130px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN STATUS</th>
+                    <th className="w-[11%] min-w-[110px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN TYPE</th>
+                    <th className="w-[11%] min-w-[120px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">LIFECYCLE STATUS</th>
+                    <th className="w-[10%] min-w-[120px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">CREATED BY</th>
+                    <th className="w-[4%] min-w-[70px] py-3.5 pr-5 pl-3 font-bold uppercase tracking-wider text-[11px] text-right whitespace-nowrap">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -1200,7 +1200,7 @@ export const SecurityScans: React.FC = () => {
                     paginatedScans.map((s) => (
                       <tr key={s.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
                         {/* APPLICATION NAME */}
-                        <td className="py-3 pl-4 pr-3 whitespace-nowrap">
+                        <td className="py-3.5 pl-5 pr-3 whitespace-nowrap">
                           <div className="flex items-center gap-2">
                             <FolderGit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
                             <span
@@ -1214,19 +1214,19 @@ export const SecurityScans: React.FC = () => {
                         </td>
 
                         {/* MODULE NAME */}
-                        <td className="py-3 px-3 whitespace-nowrap">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
                             {s.appService || '—'}
                           </span>
                         </td>
 
                         {/* SCAN DATE */}
-                        <td className="py-3 px-3 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">
+                        <td className="py-3.5 px-4 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">
                           {formatScanTimestamp12h(s.timestamp)}
                         </td>
 
                         {/* SCAN STATUS */}
-                        <td className="py-3 px-3 whitespace-nowrap">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${s.status === 'completed'
                             ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
                             : s.status === 'running' || s.status === 'analyzing'
@@ -1254,14 +1254,14 @@ export const SecurityScans: React.FC = () => {
                         </td>
 
                         {/* SCAN TYPE */}
-                        <td className="py-3 px-3 whitespace-nowrap">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
                             {s.scanType}
                           </span>
                         </td>
 
                         {/* LIFECYCLE STATUS */}
-                        <td className="py-3 px-3 whitespace-nowrap">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           {(() => {
                             const statusStr = (s.lifecycleStatus || 'Active').trim();
                             const isDecom = statusStr.toLowerCase() === 'decommissioned' || statusStr.toLowerCase() === 'inactive';
@@ -1280,7 +1280,7 @@ export const SecurityScans: React.FC = () => {
                         </td>
 
                         {/* SCAN REQUESTED BY */}
-                        <td className="py-3 px-3 whitespace-nowrap">
+                        <td className="py-3.5 px-4 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <div className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[10px] font-bold shrink-0">
                               <User className="w-3 h-3" />
@@ -1292,7 +1292,7 @@ export const SecurityScans: React.FC = () => {
                         </td>
 
                         {/* ACTIONS */}
-                        <td className="py-3 pr-4 pl-3 text-right whitespace-nowrap">
+                        <td className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">
                           <div className="inline-flex items-center justify-end">
                             <ScanActionMenu
                               scan={s}
@@ -2858,18 +2858,18 @@ export const SecurityScans: React.FC = () => {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[1100px]">
                 <thead>
                   <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                    <th className="pb-3 font-semibold">JOB ID</th>
-                    <th className="pb-3 font-semibold">PROJECT & TAG</th>
-                    <th className="pb-3 font-semibold">SOURCE</th>
-                    <th className="pb-3 font-semibold">STATUS</th>
-                    <th className="pb-3 font-semibold">SUBMITTED</th>
-                    <th className="pb-3 font-semibold">CREATED BY</th>
-                    <th className="pb-3 font-semibold">COMPONENTS</th>
-                    <th className="pb-3 font-semibold">FINDINGS</th>
-                    <th className="pb-3 font-semibold text-right">ACTION</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">JOB ID</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">PROJECT & TAG</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">SOURCE</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">STATUS</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">SUBMITTED</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">CREATED BY</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">COMPONENTS</th>
+                    <th className="py-3 px-3 font-semibold whitespace-nowrap">FINDINGS</th>
+                    <th className="py-3 pr-4 pl-3 font-semibold text-right whitespace-nowrap">ACTION</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">

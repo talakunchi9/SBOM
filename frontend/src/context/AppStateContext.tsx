@@ -175,6 +175,7 @@ interface AppStateContextType {
   
   exportSBOM: (format: 'spdx' | 'cyclonedx' | 'csv' | 'json', scanId?: string) => void;
   updateApplicationLifecycle: (appName: string, status: 'Active' | 'Decommissioned' | 'Inactive') => Promise<void>;
+  refreshAppState: (scopes?: ('projects' | 'inventory' | 'scans' | 'triage')[]) => Promise<void>;
 }
 
 const AppStateContext = createContext<AppStateContextType | undefined>(undefined);
@@ -256,132 +257,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }, 2000);
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        await api.healthReady();
-        const [scans, inventory, projectsDashboard] = await Promise.all([
-          api.listScans(),
-          api.listInventoryComponents().catch(() => [] as api.ApiInventoryComponent[]),
-          api.listProjects().catch(() => null),
-        ]);
-        if (cancelled) return;
-        setSystemStatus(prev => ({ ...prev, scanApi: 'connected', postgres: 'connected' }));
-
-        if (projectsDashboard?.projects?.length) {
-          const mappedProjs: Project[] = projectsDashboard.projects.map((p) => ({
-            id: p.id,
-            name: p.name,
-            component: p.classifier || 'Service',
-            version: '1.0.0',
-            riskScore: p.risk === 'High Risk' ? 8.5 : p.risk === 'Needs Attention' ? 5.0 : 2.0,
-            riskLevel: p.risk === 'High Risk' ? 'High' : p.risk === 'Needs Attention' ? 'Medium' : 'Low',
-            complianceScore: p.compliance_pct || 90,
-            dossierUrl: `/projects/${p.id}`,
-            componentsCount: p.scans || 1,
-            criticalCount: p.vuln_critical ?? 0,
-            highCount: p.vuln_high ?? p.vulns ?? 0,
-            mediumCount: p.vuln_medium ?? 0,
-            lowCount: p.vuln_low ?? 0,
-            lastScanned: p.last_scanned_at || new Date().toISOString(),
-            tags: p.tags || [],
-            status: 'Audited',
-          }));
-          setProjects(mappedProjs);
-        }
-
-        if (scans?.length) {
-          const jobs = await Promise.all(scans.map(async (scan) => {
-            const job = api.mapScan(scan);
-            if (scan.status !== 'COMPLETED') return job;
-            try {
-              return { ...job, ...(await api.scanPackageTotals(scan.id)) };
-            } catch {
-              return job;
-            }
-          }));
-          if (cancelled) return;
-          const bulkIds = [...new Set(jobs.map((job) => job.bulkId).filter((id): id is string => Boolean(id)))];
-          const aggregates: ScanJob[] = [];
-          for (const bulkId of bulkIds) {
-            try {
-              aggregates.push(api.mapBulkAggregate(await api.getBulkScan(bulkId)));
-            } catch {
-              // A missing batch record still leaves the child scans in history.
-            }
-          }
-          if (cancelled) return;
-          const history = [...aggregates, ...jobs];
-          for (const job of history) {
-            if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
-              announced.current.add(job.id);
-            }
-          }
-          setScansHistory(history);
-          const openJob = aggregates.find((job) => job.status === 'queued' || job.status === 'running' || job.status === 'analyzing')
-            || jobs.find((job) => job.status === 'queued' || job.status === 'running' || job.status === 'analyzing');
-          if (openJob) {
-            setActiveScan((prev) => prev ?? openJob);
-          }
-          const completed = [...scans].reverse().filter(s => (s.status || '').toUpperCase() === 'COMPLETED' && s.id);
-          for (const done of completed) {
-            await loadScanResults(done.id, done.project_id || done.application_name || '', done.application_name || '');
-          }
-          if (completed.length) setLatestScanId(completed[completed.length - 1].id);
-        }
-        if (!cancelled && inventory.length) {
-          const saved = inventory.map(api.mapInventoryComponent);
-          setComponents((prev) => mergeByPackage(prev, saved));
-        }
-        if (!cancelled) {
-          try {
-            const triage = await api.listVulnerabilityTriage();
-            if (triage?.length) {
-              const map = new Map(triage.map((t) => [t.cve.toUpperCase(), t]));
-              setVulnerabilities((prev) =>
-                prev.map((v) => {
-                  const item = map.get(v.cve.toUpperCase());
-                  if (!item) return v;
-                  return {
-                    ...v,
-                    status: (item.status as any) || v.status,
-                    vexStatus: (item.vex_status as any) || v.vexStatus,
-                    justification: item.justification || v.justification,
-                    owner: item.owner || v.owner,
-                  };
-                })
-              );
-            }
-          } catch {
-            try {
-              const stored = JSON.parse(localStorage.getItem('vuln_triage_overrides') || '{}');
-              setVulnerabilities((prev) =>
-                prev.map((v) => {
-                  const override = stored[v.cve.toUpperCase()];
-                  if (!override) return v;
-                  return {
-                    ...v,
-                    status: override.status || v.status,
-                    vexStatus: override.vexStatus || v.vexStatus,
-                  };
-                })
-              );
-            } catch {}
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setSystemStatus(prev => ({ ...prev, scanApi: 'error', postgres: 'error' }));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // loadScanResults is stable enough for the initial hydrate.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const lastRefreshRef = useRef<number>(0);
 
   const loadScanResults = async (scanId: string, project: string, application = '') => {
     const [comps, vulns] = await Promise.all([
@@ -419,6 +295,157 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       lows: mappedVulns.filter((v) => v.severity === 'Low').length,
     };
   };
+
+  const refreshAppState = async (scopes?: ('projects' | 'inventory' | 'scans' | 'triage')[]) => {
+    try {
+      const fetchProjects = !scopes || scopes.includes('projects');
+      const fetchInventory = !scopes || scopes.includes('inventory');
+      const fetchScans = !scopes || scopes.includes('scans');
+      const fetchTriage = !scopes || scopes.includes('triage');
+
+      const [scans, inventory, projectsDashboard] = await Promise.all([
+        fetchScans ? api.listScans().catch(() => null) : Promise.resolve(null),
+        fetchInventory ? api.listInventoryComponents().catch(() => [] as api.ApiInventoryComponent[]) : Promise.resolve([] as api.ApiInventoryComponent[]),
+        fetchProjects ? api.listProjects().catch(() => null) : Promise.resolve(null),
+      ]);
+
+      setSystemStatus(prev => ({ ...prev, scanApi: 'connected', postgres: 'connected' }));
+
+      if (projectsDashboard?.projects?.length) {
+        const mappedProjs: Project[] = projectsDashboard.projects.map((p) => ({
+          id: p.id,
+          name: p.name,
+          component: p.classifier || 'Service',
+          version: '1.0.0',
+          riskScore: p.risk === 'High Risk' ? 8.5 : p.risk === 'Needs Attention' ? 5.0 : 2.0,
+          riskLevel: p.risk === 'High Risk' ? 'High' : p.risk === 'Needs Attention' ? 'Medium' : 'Low',
+          complianceScore: p.compliance_pct || 90,
+          dossierUrl: `/projects/${p.id}`,
+          componentsCount: p.scans || 1,
+          criticalCount: p.vuln_critical ?? 0,
+          highCount: p.vuln_high ?? p.vulns ?? 0,
+          mediumCount: p.vuln_medium ?? 0,
+          lowCount: p.vuln_low ?? 0,
+          lastScanned: p.last_scanned_at || new Date().toISOString(),
+          tags: p.tags || [],
+          status: 'Audited',
+          lifecycleStatus: (p as any).lifecycle_status || 'Active',
+          technicalOwner: (p as any).technical_owner,
+          businessOwner: (p as any).business_owner,
+        }));
+        setProjects(mappedProjs);
+      }
+
+      if (scans?.length) {
+        const jobs = await Promise.all(scans.map(async (scan) => {
+          const job = api.mapScan(scan);
+          if (scan.status !== 'COMPLETED') return job;
+          try {
+            return { ...job, ...(await api.scanPackageTotals(scan.id)) };
+          } catch {
+            return job;
+          }
+        }));
+        const bulkIds = [...new Set(jobs.map((job) => job.bulkId).filter((id): id is string => Boolean(id)))];
+        const aggregates: ScanJob[] = [];
+        for (const bulkId of bulkIds) {
+          try {
+            aggregates.push(api.mapBulkAggregate(await api.getBulkScan(bulkId)));
+          } catch {}
+        }
+        const history = [...aggregates, ...jobs];
+        for (const job of history) {
+          if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+            announced.current.add(job.id);
+          }
+        }
+        setScansHistory(history);
+        const openJob = aggregates.find((job) => job.status === 'queued' || job.status === 'running' || job.status === 'analyzing')
+          || jobs.find((job) => job.status === 'queued' || job.status === 'running' || job.status === 'analyzing');
+        if (openJob) {
+          setActiveScan((prev) => prev ?? openJob);
+        }
+        const completed = [...scans].reverse().filter(s => (s.status || '').toUpperCase() === 'COMPLETED' && s.id);
+        for (const done of completed) {
+          await loadScanResults(done.id, done.project_id || done.application_name || '', done.application_name || '');
+        }
+        if (completed.length) setLatestScanId(completed[completed.length - 1].id);
+      }
+
+      if (inventory?.length) {
+        const saved = inventory.map(api.mapInventoryComponent);
+        setComponents((prev) => mergeByPackage(prev, saved));
+      }
+
+      if (fetchTriage) {
+        try {
+          const triage = await api.listVulnerabilityTriage();
+          if (triage?.length) {
+            const map = new Map(triage.map((t) => [t.cve.toUpperCase(), t]));
+            setVulnerabilities((prev) =>
+              prev.map((v) => {
+                const item = map.get(v.cve.toUpperCase());
+                if (!item) return v;
+                return {
+                  ...v,
+                  status: (item.status as any) || v.status,
+                  vexStatus: (item.vex_status as any) || v.vexStatus,
+                  justification: item.justification || v.justification,
+                  owner: item.owner || v.owner,
+                };
+              })
+            );
+          }
+        } catch {
+          try {
+            const stored = JSON.parse(localStorage.getItem('vuln_triage_overrides') || '{}');
+            setVulnerabilities((prev) =>
+              prev.map((v) => {
+                const override = stored[v.cve.toUpperCase()];
+                if (!override) return v;
+                return {
+                  ...v,
+                  status: override.status || v.status,
+                  vexStatus: override.vexStatus || v.vexStatus,
+                };
+              })
+            );
+          } catch {}
+        }
+      }
+      lastRefreshRef.current = Date.now();
+    } catch {
+      setSystemStatus(prev => ({ ...prev, scanApi: 'error', postgres: 'error' }));
+    }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await api.healthReady();
+        await refreshAppState();
+      } catch {
+        setSystemStatus(prev => ({ ...prev, scanApi: 'error', postgres: 'error' }));
+      }
+    })();
+
+    const handleFocus = () => {
+      if (Date.now() - lastRefreshRef.current > 15000) {
+        void refreshAppState();
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') handleFocus();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const startScan = async (params: {
     projectName: string;
@@ -729,6 +756,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             );
           }
         } catch {}
+        void refreshAppState(['projects', 'inventory']);
       } catch {
         loadedResults.current.delete(job.id);
       }
@@ -860,6 +888,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       status: 'Audited',
     };
     setProjects(prev => [proj, ...prev.filter((item) => item.id !== proj.id)]);
+    void refreshAppState(['projects']);
     addToast({
       type: 'success',
       title: 'Project Added',
@@ -895,6 +924,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       created_by: item.createdBy,
     })), reason);
     rememberComponents(saved.map(api.mapInventoryComponent));
+    void refreshAppState(['projects', 'inventory']);
   };
 
   const addComponent = async (newComp: Partial<SBOMComponent>, reason?: string) => {
@@ -912,6 +942,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       await api.deleteInventoryComponent(id, reason);
       setComponents((prev) => prev.filter((c) => c.id !== id));
+      void refreshAppState(['projects', 'inventory']);
       addToast({
         type: 'info',
         title: 'Component Removed',
@@ -1034,6 +1065,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
             : p
         )
       );
+      void refreshAppState(['projects', 'scans']);
       addToast({
         type: 'success',
         title: 'Lifecycle Status Updated',
@@ -1304,6 +1336,7 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         removeToast,
         exportSBOM,
         updateApplicationLifecycle,
+        refreshAppState,
       }}
     >
       {children}

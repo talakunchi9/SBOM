@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
   FolderGit2,
@@ -463,8 +464,8 @@ export const ProjectsMicroservices: React.FC = () => {
         const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
         const vulnCount = projectVulns.length > 0 ? projectVulns.length : p.vulns;
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+        return createPortal(
+          <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn">
             <div className="bg-white dark:bg-[#111827] rounded-xl max-w-xl w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100 dark:border-gray-800">
                 <div>
@@ -681,7 +682,8 @@ export const ProjectsMicroservices: React.FC = () => {
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
     </div>

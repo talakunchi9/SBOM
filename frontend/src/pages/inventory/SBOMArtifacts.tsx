@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useLocation, useSearchParams } from 'react-router-dom';
 import {
   FileText,
@@ -506,7 +507,7 @@ export const SBOMArtifacts: React.FC = () => {
       {/* Artifacts Table matching Screenshot 5 */}
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[850px]">
+          <table className="w-full text-left text-xs min-w-[950px]">
             <thead>
               <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
                 <th className="pb-3 pr-4 font-semibold whitespace-nowrap">FILE</th>
@@ -623,8 +624,8 @@ export const SBOMArtifacts: React.FC = () => {
       {/* "The format Column cannot be predefined, When clicked on the download    */}
       {/* button the user should get an option to choose the format to download In" */}
       {/* ========================================================================= */}
-      {downloadModalOpen && targetArtifact && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+      {downloadModalOpen && targetArtifact && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-xl max-w-md w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2">
@@ -635,7 +636,7 @@ export const SBOMArtifacts: React.FC = () => {
               </div>
               <button
                 onClick={() => setDownloadModalOpen(false)}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                className="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -672,7 +673,7 @@ export const SBOMArtifacts: React.FC = () => {
                       name="formatChoice"
                       checked={chosenDownloadFormat === fmt.id}
                       onChange={() => setChosenDownloadFormat(fmt.id as 'spdx' | 'cyclonedx')}
-                      className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                      className="mt-0.5 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                     <div>
                       <p className="text-xs font-bold text-gray-900 dark:text-white">{fmt.label}</p>
@@ -690,7 +691,7 @@ export const SBOMArtifacts: React.FC = () => {
                   type="checkbox"
                   checked={includeSignature}
                   onChange={(e) => setIncludeSignature(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500"
+                  className="rounded text-blue-600 focus:ring-blue-500 cursor-pointer"
                 />
                 <span>Include cryptographic attestation signature (.sig)</span>
               </label>
@@ -700,33 +701,34 @@ export const SBOMArtifacts: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setDownloadModalOpen(false)}
-                className="px-4 py-2 text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50"
+                className="px-4 py-2 text-xs font-semibold border border-gray-200 dark:border-gray-700 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleExecuteDownload}
-                className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm flex items-center gap-1.5"
+                className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm flex items-center gap-1.5 cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
                 Download Artifact
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Ingest Modal */}
-      {ingestModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+      {ingestModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2">
                 <FileCode className="w-5 h-5 text-blue-600" />
                 <h3 className="text-base font-bold text-gray-900 dark:text-white">Ingest Manifest</h3>
               </div>
-              <button onClick={() => setIngestModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600">
+              <button onClick={() => setIngestModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -734,54 +736,56 @@ export const SBOMArtifacts: React.FC = () => {
               Upload or paste a dependency manifest to extract packages, lockfile relationships, and license declarations.
             </p>
             <div className="flex justify-end gap-2 pt-3 border-t">
-              <button onClick={() => setIngestModalOpen(false)} className="px-3 py-1.5 text-xs border rounded-lg">Cancel</button>
+              <button onClick={() => setIngestModalOpen(false)} className="px-3 py-1.5 text-xs border rounded-lg cursor-pointer">Cancel</button>
               <button
                 onClick={() => {
                   setIngestModalOpen(false);
                   addToast({ type: 'success', title: 'Manifest Ingested', message: 'Parsed dependency manifest' });
                 }}
-                className="px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm"
+                className="px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm cursor-pointer"
               >
                 Parse & Ingest
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Audit Export Modal */}
-      {auditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+      {auditModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-blue-600" />
                 <h3 className="text-base font-bold text-gray-900 dark:text-white">1-Click Audit Export</h3>
               </div>
-              <button onClick={() => setAuditModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600">
+              <button onClick={() => setAuditModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
             <p className="text-xs text-gray-500">Generates certified audit package across all 6 verified artifacts.</p>
             <div className="flex justify-end gap-2 pt-3 border-t">
-              <button onClick={() => setAuditModalOpen(false)} className="px-3 py-1.5 text-xs border rounded-lg">Cancel</button>
+              <button onClick={() => setAuditModalOpen(false)} className="px-3 py-1.5 text-xs border rounded-lg cursor-pointer">Cancel</button>
               <button
                 onClick={() => {
                   setAuditModalOpen(false);
                   addToast({ type: 'success', title: 'Audit Package Generated', message: 'Downloaded audit package.' });
                 }}
-                className="px-3 py-1.5 text-xs font-bold bg-blue-600 text-white rounded-lg"
+                className="px-3 py-1.5 text-xs font-bold bg-blue-600 text-white rounded-lg cursor-pointer"
               >
                 Download Package
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Upload SBOM Modal */}
-      {uploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-fadeIn">
+      {uploadModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
               <div className="flex items-center gap-2.5">
@@ -950,13 +954,14 @@ export const SBOMArtifacts: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {/* ========================================================================= */}
       {/* MODAL: ARTIFACT DETAILS                                                   */}
       {/* ========================================================================= */}
-      {detailsModalOpen && selectedArtifactDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-fadeIn">
+      {detailsModalOpen && selectedArtifactDetails && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-5 animate-in fade-in zoom-in-95 duration-150">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
@@ -1108,7 +1113,8 @@ export const SBOMArtifacts: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

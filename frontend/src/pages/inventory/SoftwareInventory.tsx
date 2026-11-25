@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, NavLink, useSearchParams, useLocation } from 'react-router-dom';
 import {
   Package,
@@ -1464,8 +1465,8 @@ export const SoftwareInventory: React.FC = () => {
       {/* ================================================================= */}
       {/* MODAL 1: INGEST MANIFEST MODAL (Excel Sr 12) - High-End Redesign  */}
       {/* ================================================================= */}
-      {ingestModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {ingestModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
             {/* Modal Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1594,14 +1595,14 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-
       {/* ================================================================= */}
       {/* MODAL 2: 1-CLICK AUDIT EXPORT MODAL (Excel Sr 12) - High-End      */}
       {/* ================================================================= */}
-      {auditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {auditModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
             {/* Modal Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1687,14 +1688,12 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-
       {/* ================================================================= */}
-      {/* MODAL 3: UPLOAD SBOM MODAL (Excel Sr 12) - High-End Redesign      */}
-      {/* ================================================================= */}
-      {uploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {uploadModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden space-y-0">
             {/* Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1828,13 +1827,14 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
 
       {/* Delete Component with Reason Modal */}
-      {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {deleteTarget && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-md w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden p-6 space-y-4">
             <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
               <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/50">
@@ -1878,13 +1878,15 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Package History Drawer */}
-      {historyPackage && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/40 backdrop-blur-xs animate-fadeIn">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800">
+      {historyPackage && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setHistoryPackage(null)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -1999,13 +2001,15 @@ export const SoftwareInventory: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Audit Log Drawer */}
-      {showAuditLog && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/40 backdrop-blur-xs animate-fadeIn">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800">
+      {showAuditLog && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setShowAuditLog(false)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
@@ -2064,13 +2068,15 @@ export const SoftwareInventory: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* SC-03: Package Occurrence Drawer */}
-      {selectedPackageForDrawer && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-gray-950/40 backdrop-blur-xs animate-fadeIn">
-          <div className="w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800">
+      {selectedPackageForDrawer && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedPackageForDrawer(null)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
             {/* Header */}
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
               <div className="flex items-center gap-3">
@@ -2230,7 +2236,8 @@ export const SoftwareInventory: React.FC = () => {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Upload File Pop-up Modal */}

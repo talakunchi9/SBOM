@@ -974,22 +974,22 @@ export const Vulnerabilities: React.FC = () => {
       {/* Main Vulnerability Table */}
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xs overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-gray-50/80 dark:bg-gray-800/70 text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
+          <table className="w-full text-left text-xs min-w-[1150px]">
+            <thead className="bg-gray-50/80 dark:bg-gray-800/70 text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
               <tr>
-                <th className="py-2.5 px-2">CVE ID</th>
-                <th className="py-2.5 px-2">App</th>
-                <th className="py-2.5 px-2">Vulnerability Name</th>
-                <th className="py-2.5 px-2">Module</th>
-                <th className="py-2.5 px-2">Ownership</th>
-                <th className="py-2.5 px-2">Severity</th>
-                <th className="py-2.5 px-1.5 text-center">CVSS Score</th>
-                <th className="py-2.5 px-2">Component + Version</th>
-                <th className="py-2.5 px-1.5 text-center">Occurrences</th>
-                <th className="py-2.5 px-1.5">Status</th>
-                <th className="py-2.5 px-1.5">VEX Status</th>
-                <th className="py-2.5 px-1.5">Fixed Version</th>
-                <th className="py-2.5 px-1 text-center">Actions</th>
+                <th className="py-3 px-3">CVE ID</th>
+                <th className="py-3 px-3">App</th>
+                <th className="py-3 px-3">Vulnerability Name</th>
+                <th className="py-3 px-3">Module</th>
+                <th className="py-3 px-3">Ownership</th>
+                <th className="py-3 px-2.5">Severity</th>
+                <th className="py-3 px-2 text-center">CVSS Score</th>
+                <th className="py-3 px-3">Component + Version</th>
+                <th className="py-3 px-2 text-center">Occurrences</th>
+                <th className="py-3 px-2.5">Status</th>
+                <th className="py-3 px-2.5">VEX Status</th>
+                <th className="py-3 px-2.5">Fixed Version</th>
+                <th className="py-3 px-2 text-center">Actions</th>
               </tr>
             </thead>
 
