@@ -58,24 +58,32 @@ export const Vulnerabilities: React.FC = () => {
   const [loadingDrawer, setLoadingDrawer] = useState(false);
   const [drawerFilter, setDrawerFilter] = useState('');
 
-  // Business Owner resolution map from application catalog
+  // Business & Technical Owner resolution maps from application catalog
   const [appBusinessOwners, setAppBusinessOwners] = useState<Record<string, string>>({});
+  const [appTechnicalOwners, setAppTechnicalOwners] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let active = true;
     listProjects()
       .then((data) => {
         if (!active) return;
-        const map: Record<string, string> = {};
+        const bizMap: Record<string, string> = {};
+        const techMap: Record<string, string> = {};
         (data.projects || []).forEach((p) => {
+          const key = p.name.toLowerCase().trim();
           const biz = (p as any).business_owner || p.ownership;
           if (biz && biz !== '—') {
-            map[p.name.toLowerCase().trim()] = biz;
+            bizMap[key] = biz;
+          }
+          const tech = (p as any).technical_owner;
+          if (tech && tech !== '—') {
+            techMap[key] = tech;
           }
         });
-        setAppBusinessOwners(map);
+        setAppBusinessOwners(bizMap);
+        setAppTechnicalOwners(techMap);
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => {
       active = false;
     };
@@ -91,6 +99,22 @@ export const Vulnerabilities: React.FC = () => {
       appBusinessOwners[appKey] ||
       (scansHistory || []).find((s) => s.targetProject?.toLowerCase() === projKey)?.businessOwner ||
       (scansHistory || []).find((s) => s.appService?.toLowerCase() === appKey)?.businessOwner ||
+      '—'
+    );
+  };
+
+  const resolveTechOwner = (v: Vulnerability): string => {
+    const projKey = (v.project || '').toLowerCase().trim();
+    const appKey = (v.application || '').toLowerCase().trim();
+    return (
+      (v as any).technicalOwner ||
+      (v as any).technical_owner ||
+      appTechnicalOwners[projKey] ||
+      appTechnicalOwners[appKey] ||
+      ((projects || []).find((p) => p.name.toLowerCase().trim() === projKey) as any)?.technicalOwner ||
+      ((scansHistory || []).find((s) => s.targetProject?.toLowerCase() === projKey) as any)?.technicalOwner ||
+      ((scansHistory || []).find((s) => s.appService?.toLowerCase() === appKey) as any)?.technicalOwner ||
+      v.owner ||
       '—'
     );
   };
@@ -516,6 +540,8 @@ export const Vulnerabilities: React.FC = () => {
       // 1. Vulnerability Details
       'CVE ID',
       'Vulnerability Name',
+      'Application',
+      'Modules',
       'Description',
       'Severity',
       'CVSS Score',
@@ -527,15 +553,14 @@ export const Vulnerabilities: React.FC = () => {
       'Current Version',
       'Ecosystem',
       'PURL / CPE',
-      'Project',
-      'Application',
       'Direct / Transitive',
       'Dependency Path',
       // 3. Remediation
       'Fixed Version',
       'Recommended Action',
-      'Owner / Team',
-      'Ticket ID',
+      'Business Owner',
+      'Technical Owner',
+      'VEX Status',
       // 4. History
       'First Detected',
       'Last Detected',
@@ -545,6 +570,8 @@ export const Vulnerabilities: React.FC = () => {
       // 1. Vulnerability Details
       csvEscape(v.cve),
       csvEscape(v.name || v.description?.split('.')[0] || v.cve),
+      csvEscape(v.project),
+      csvEscape(v.application || v.project),
       csvEscape(v.description || ''),
       csvEscape(v.severity),
       csvEscape(v.cvss !== undefined ? v.cvss.toFixed(1) : '0.0'),
@@ -556,15 +583,14 @@ export const Vulnerabilities: React.FC = () => {
       csvEscape(v.version || v.affectedVersions || ''),
       csvEscape(v.ecosystem || 'npm'),
       csvEscape(v.purl || (v.package ? `pkg:${v.ecosystem || 'npm'}/${v.package}@${v.version || '0.0.0'}` : '')),
-      csvEscape(v.project),
-      csvEscape(v.application || v.project),
       csvEscape(v.direct ? 'Direct' : 'Transitive'),
       csvEscape(v.dependencyPath || `${v.project} > ${v.package}`),
       // 3. Remediation
       csvEscape(v.fixVersion && v.fixVersion !== '*' ? v.fixVersion : 'None available'),
       csvEscape(getRecommendedAction(v)),
-      csvEscape(v.owner || 'Security Team'),
-      csvEscape(v.ticketId || `SEC-${Math.abs(v.cve.split('').reduce((a, b) => ((a << 5) - a + b.charCodeAt(0)) | 0, 0) % 9000) + 1000}`),
+      csvEscape(resolveBizOwner(v)),
+      csvEscape(resolveTechOwner(v)),
+      csvEscape(v.vexStatus || 'affected'),
       // 4. History
       csvEscape(v.firstDetected || '2026-10-13 10:00 AM'),
       csvEscape(v.lastDetected || '2026-10-13 10:00 AM'),
@@ -778,8 +804,8 @@ export const Vulnerabilities: React.FC = () => {
           <div
             onClick={() => setSelectedSeverity('All')}
             className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'All'
-                ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30 ring-2 ring-blue-500/20 shadow-xs'
-                : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 hover:border-gray-300 dark:hover:border-gray-700'
+              ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/30 ring-2 ring-blue-500/20 shadow-xs'
+              : 'border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-800/40 hover:border-gray-300 dark:hover:border-gray-700'
               }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -797,8 +823,8 @@ export const Vulnerabilities: React.FC = () => {
           <div
             onClick={() => setSelectedSeverity('Critical')}
             className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Critical'
-                ? 'border-rose-600 bg-rose-50/90 dark:bg-rose-950/60 ring-2 ring-rose-500/20 shadow-xs'
-                : 'border-rose-200/80 dark:border-rose-900/40 bg-rose-50/30 dark:bg-rose-950/20 hover:border-rose-400 dark:hover:border-rose-800'
+              ? 'border-rose-600 bg-rose-50/90 dark:bg-rose-950/60 ring-2 ring-rose-500/20 shadow-xs'
+              : 'border-rose-200/80 dark:border-rose-900/40 bg-rose-50/30 dark:bg-rose-950/20 hover:border-rose-400 dark:hover:border-rose-800'
               }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -816,8 +842,8 @@ export const Vulnerabilities: React.FC = () => {
           <div
             onClick={() => setSelectedSeverity('High')}
             className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'High'
-                ? 'border-orange-600 bg-orange-50/90 dark:bg-orange-950/60 ring-2 ring-orange-500/20 shadow-xs'
-                : 'border-orange-200/80 dark:border-orange-900/40 bg-orange-50/30 dark:bg-orange-950/20 hover:border-orange-400 dark:hover:border-orange-800'
+              ? 'border-orange-600 bg-orange-50/90 dark:bg-orange-950/60 ring-2 ring-orange-500/20 shadow-xs'
+              : 'border-orange-200/80 dark:border-orange-900/40 bg-orange-50/30 dark:bg-orange-950/20 hover:border-orange-400 dark:hover:border-orange-800'
               }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -835,8 +861,8 @@ export const Vulnerabilities: React.FC = () => {
           <div
             onClick={() => setSelectedSeverity('Medium')}
             className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Medium'
-                ? 'border-amber-600 bg-amber-50/90 dark:bg-amber-950/60 ring-2 ring-amber-500/20 shadow-xs'
-                : 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/20 hover:border-amber-400 dark:hover:border-amber-800'
+              ? 'border-amber-600 bg-amber-50/90 dark:bg-amber-950/60 ring-2 ring-amber-500/20 shadow-xs'
+              : 'border-amber-200/80 dark:border-amber-900/40 bg-amber-50/30 dark:bg-amber-950/20 hover:border-amber-400 dark:hover:border-amber-800'
               }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -854,8 +880,8 @@ export const Vulnerabilities: React.FC = () => {
           <div
             onClick={() => setSelectedSeverity('Low')}
             className={`p-3.5 rounded-xl border transition-all cursor-pointer ${selectedSeverity === 'Low'
-                ? 'border-sky-600 bg-sky-50/90 dark:bg-sky-950/60 ring-2 ring-sky-500/20 shadow-xs'
-                : 'border-sky-200/80 dark:border-sky-900/40 bg-sky-50/30 dark:bg-sky-950/20 hover:border-sky-400 dark:hover:border-sky-800'
+              ? 'border-sky-600 bg-sky-50/90 dark:bg-sky-950/60 ring-2 ring-sky-500/20 shadow-xs'
+              : 'border-sky-200/80 dark:border-sky-900/40 bg-sky-50/30 dark:bg-sky-950/20 hover:border-sky-400 dark:hover:border-sky-800'
               }`}
           >
             <div className="flex items-center gap-1.5 mb-1.5">
@@ -893,8 +919,8 @@ export const Vulnerabilities: React.FC = () => {
               type="button"
               onClick={() => setShowFiltersPanel(!showFiltersPanel)}
               className={`px-3 py-2 text-xs font-semibold rounded-xl border transition-all inline-flex items-center gap-1.5 cursor-pointer ${showFiltersPanel || statusFilter !== 'All' || vexFilter !== 'All'
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400'
-                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-300 dark:border-blue-800 text-blue-600 dark:text-blue-400'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                 }`}
             >
               <Filter className="w-3.5 h-3.5" />
@@ -1367,8 +1393,8 @@ export const Vulnerabilities: React.FC = () => {
                           </td>
                           <td className="p-3">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${u.status?.toLowerCase() === 'removed'
-                                ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
-                                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
+                              ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
+                              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
                               }`}>
                               {u.status || 'Active'}
                             </span>

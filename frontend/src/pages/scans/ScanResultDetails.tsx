@@ -332,11 +332,11 @@ export const ScanResultDetails: React.FC<ScanResultDetailsProps> = ({
                 {job.scanType}
               </span>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            {/* <p className="text-xs text-gray-500 mt-1">
               {job.isBulkAggregate
                 ? `Batch ID: ${job.bulkId || job.id}`
                 : `${job.appService || 'Application'} · ${job.releaseTag || 'UNKNOWN'} · ${job.id}`}
-            </p>
+            </p> */}
           </div>
           <button type="button" onClick={onClose} className="p-1 text-gray-400 hover:text-gray-600 cursor-pointer">
             <X className="w-5 h-5" />
