@@ -1,28 +1,31 @@
 -- ============================================================================
--- S-BOM Database Schema (Latest Production Schema)
+-- S-BOM Database Schema (Latest Production Schema - Baseline 010)
 -- ============================================================================
 -- Project:        Software Bill of Materials (S-BOM) Management Platform
 -- File:           S-BOM_update.sql
 -- Compatibility:  PostgreSQL 14, 15, 16, 17, 18+
 -- Description:    Comprehensive, cleanly formatted single SQL file containing
---                 the complete and latest relational schema, helper functions,
---                 table constraints, foreign key relationships, performance
---                 indexes, documentation comments, and migration baseline.
+--                 the complete and latest relational schema (migrations 001–010),
+--                 helper & trigger functions, table constraints, foreign key
+--                 relationships, performance & deduplication indexes,
+--                 documentation comments, and migration baseline.
 -- ============================================================================
 --
 -- ENTITY RELATIONSHIP HIERARCHY:
 --
 --  organizations (Tenant root)
---   ├── projects
---   │     └── applications
---   │           └── inventory_components
+--   ├── applications (formerly projects; auto readable_id APP-0001)
+--   │     ├── modules (formerly applications)
+--   │     │     └── inventory_components (manual / uploaded catalog)
+--   │     └── projects (backward-compatible VIEW -> applications)
 --   ├── credentials
 --   ├── scans
 --   │     └── sboms
 --   │           └── sbom_components
 --   │                 └── findings
 --   │                       └── vulnerabilities
---   └── vulnerability_triage (Cross-scan triage & VEX overrides)
+--   ├── vulnerability_triage (Cross-scan triage & VEX overrides)
+--   └── inventory_change_log (Audit log for inventory & vuln status changes)
 --
 -- ============================================================================
 
@@ -45,6 +48,9 @@ SELECT pg_catalog.set_config('search_path', 'public', false);
 -- ----------------------------------------------------------------------------
 -- 2. Clean Teardown (Safe drops in reverse dependency order)
 -- ----------------------------------------------------------------------------
+DROP VIEW IF EXISTS projects CASCADE;
+
+DROP TABLE IF EXISTS inventory_change_log CASCADE;
 DROP TABLE IF EXISTS vulnerability_triage CASCADE;
 DROP TABLE IF EXISTS findings CASCADE;
 DROP TABLE IF EXISTS sbom_components CASCADE;
@@ -52,12 +58,14 @@ DROP TABLE IF EXISTS sboms CASCADE;
 DROP TABLE IF EXISTS scans CASCADE;
 DROP TABLE IF EXISTS credentials CASCADE;
 DROP TABLE IF EXISTS inventory_components CASCADE;
+DROP TABLE IF EXISTS modules CASCADE;
 DROP TABLE IF EXISTS applications CASCADE;
 DROP TABLE IF EXISTS projects CASCADE;
 DROP TABLE IF EXISTS organizations CASCADE;
 DROP TABLE IF EXISTS vulnerabilities CASCADE;
 DROP TABLE IF EXISTS schema_migrations CASCADE;
 
+DROP FUNCTION IF EXISTS generate_next_readable_app_id() CASCADE;
 DROP FUNCTION IF EXISTS sbom_jsonb(text) CASCADE;
 DROP FUNCTION IF EXISTS sbom_score(text) CASCADE;
 
@@ -109,52 +117,98 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
+-- Function: generate_next_readable_app_id
+-- Auto-generates sequential readable IDs (APP-0001, APP-0002, ...) per organization.
+CREATE OR REPLACE FUNCTION generate_next_readable_app_id()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_next_num INTEGER;
+  v_prefix TEXT := 'APP-';
+BEGIN
+  IF NEW.readable_id IS NULL OR NEW.readable_id = '' THEN
+    SELECT COALESCE(MAX(
+      NULLIF(regexp_replace(readable_id, '^APP-', ''), '')::INTEGER
+    ), 0) + 1
+    INTO v_next_num
+    FROM applications
+    WHERE organization_id = NEW.organization_id;
+
+    NEW.readable_id := v_prefix || LPAD(v_next_num::text, 4, '0');
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
 
 -- ----------------------------------------------------------------------------
--- 4. Core Relational Tables
+-- 4. Core Relational Tables & Views
 -- ----------------------------------------------------------------------------
 
 -- Table 1: organizations
--- Tenant. Projects, scans, and credentials belong to one organization.
+-- Tenant. Applications, scans, and credentials belong to one organization.
 CREATE TABLE organizations (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Table 2: projects
--- Project catalog for one organization.
-CREATE TABLE projects (
-    id               TEXT PRIMARY KEY,
-    organization_id  TEXT NOT NULL,
-    name             TEXT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+-- Table 2: applications (formerly projects)
+-- Top-level application catalog for one organization.
+CREATE TABLE applications (
+    id                TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
+    organization_id   TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    readable_id       TEXT NOT NULL DEFAULT '',
+    business_owner    TEXT NOT NULL DEFAULT '',
+    technical_owner   TEXT NOT NULL DEFAULT '',
+    development_type  TEXT NOT NULL DEFAULT 'In-house',
+    vendor_name       TEXT NOT NULL DEFAULT '',
+    lifecycle_status  TEXT NOT NULL DEFAULT 'Active',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT projects_name_check CHECK (length(btrim(name)) > 0),
     CONSTRAINT projects_organization_id_name_key UNIQUE (organization_id, name),
-    CONSTRAINT projects_id_organization_id_key UNIQUE (id, organization_id)
+    CONSTRAINT projects_id_organization_id_key UNIQUE (id, organization_id),
+    CONSTRAINT chk_applications_dev_type CHECK (development_type IN ('In-house', 'Outsourced', 'Vendor')),
+    CONSTRAINT chk_applications_lifecycle CHECK (lifecycle_status IN ('Active', 'Inactive', 'Deprecated', 'Archived', 'Planned', 'Decommissioned'))
 );
 
--- Table 3: applications
--- Application or service that belongs to one project.
-CREATE TABLE applications (
-    id               TEXT PRIMARY KEY,
-    project_id       TEXT NOT NULL,
-    organization_id  TEXT NOT NULL,
-    name             TEXT NOT NULL,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+CREATE TRIGGER trg_applications_readable_id
+BEFORE INSERT ON applications
+FOR EACH ROW
+EXECUTE FUNCTION generate_next_readable_app_id();
+
+-- Backward-compatible view for legacy queries expecting 'projects'
+CREATE OR REPLACE VIEW projects AS
+    SELECT * FROM applications;
+
+-- Table 3: modules (formerly applications)
+-- Microservice, service, or sub-module that belongs to one application.
+CREATE TABLE modules (
+    id                    TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
+    application_id        TEXT NOT NULL,
+    organization_id       TEXT NOT NULL,
+    name                  TEXT NOT NULL,
+    path                  TEXT NOT NULL DEFAULT '/',
+    programming_language  TEXT NOT NULL DEFAULT '',
+    package_manager       TEXT NOT NULL DEFAULT '',
+    module_type           TEXT NOT NULL DEFAULT 'Microservice',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT applications_name_check CHECK (length(btrim(name)) > 0),
-    CONSTRAINT applications_organization_id_project_id_name_key UNIQUE (organization_id, project_id, name),
-    CONSTRAINT applications_id_project_id_organization_id_key UNIQUE (id, project_id, organization_id)
+    CONSTRAINT applications_organization_id_project_id_name_key UNIQUE (organization_id, application_id, name),
+    CONSTRAINT applications_id_project_id_organization_id_key UNIQUE (id, application_id, organization_id),
+    CONSTRAINT chk_modules_module_type CHECK (module_type IN ('Library', 'Microservice', 'Frontend', 'Service', 'Backend', 'Mobile', 'Other'))
 );
 
 -- Table 4: inventory_components
--- Package tracked on an application in the software inventory.
+-- Package tracked on an application/module in the software inventory.
 CREATE TABLE inventory_components (
-    id                    TEXT PRIMARY KEY,
+    id                    TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
     organization_id       TEXT NOT NULL,
-    project_id            TEXT NOT NULL,
     application_id        TEXT NOT NULL,
+    module_id             TEXT NOT NULL,
     name                  TEXT NOT NULL,
     package_name          TEXT NOT NULL,
     version               TEXT NOT NULL,
@@ -168,13 +222,30 @@ CREATE TABLE inventory_components (
     is_direct_dependency  BOOLEAN NOT NULL DEFAULT TRUE,
     supplier_name         TEXT NOT NULL DEFAULT '',
     created_by            TEXT NOT NULL DEFAULT '',
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT inventory_components_name_check CHECK (length(btrim(name)) > 0),
     CONSTRAINT inventory_components_version_check CHECK (length(btrim(version)) > 0),
     CONSTRAINT inventory_components_vulnerability_count_check CHECK (vulnerability_count >= 0)
 );
 
--- Table 5: credentials
+-- Table 5: inventory_change_log
+-- Audit trail for manual inventory additions/removals and vulnerability status transitions.
+CREATE TABLE inventory_change_log (
+    id                 TEXT PRIMARY KEY,
+    organization_id    TEXT NOT NULL DEFAULT 'default',
+    application_id     TEXT NOT NULL DEFAULT '',
+    module_id          TEXT NOT NULL DEFAULT '',
+    component_name     TEXT NOT NULL,
+    component_version  TEXT NOT NULL,
+    action             TEXT NOT NULL,
+    old_value          JSONB,
+    new_value          JSONB,
+    reason             TEXT NOT NULL DEFAULT '',
+    changed_by         TEXT NOT NULL DEFAULT 'SYSTEM',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Table 6: credentials
 -- Git credentials and encrypted secrets.
 CREATE TABLE credentials (
     id                  TEXT PRIMARY KEY,
@@ -193,10 +264,10 @@ CREATE TABLE credentials (
     expires_at          TIMESTAMPTZ
 );
 
--- Table 6: scans
+-- Table 7: scans
 -- One scan execution, queue tracking, bulk row metadata, and progress events.
 CREATE TABLE scans (
-    id                      TEXT PRIMARY KEY,
+    id                      TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
     organization_id         TEXT NOT NULL,
     project_id              TEXT NOT NULL DEFAULT '',
     application_id          TEXT NOT NULL DEFAULT '',
@@ -206,12 +277,12 @@ CREATE TABLE scans (
     version_strategy        TEXT NOT NULL DEFAULT '',
     bom_type                TEXT NOT NULL DEFAULT 'SBOM',
     source_type             TEXT NOT NULL DEFAULT '',
-    scan_status             TEXT NOT NULL,
+    scan_status             TEXT NOT NULL DEFAULT 'completed',
     scan_stage              TEXT NOT NULL DEFAULT '',
     error_code              TEXT NOT NULL DEFAULT '',
     error_message           TEXT NOT NULL DEFAULT '',
-    idempotency_key         TEXT NOT NULL UNIQUE,
-    created_at              TIMESTAMPTZ NOT NULL,
+    idempotency_key         TEXT NOT NULL UNIQUE DEFAULT (gen_random_uuid())::text,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     started_at              TIMESTAMPTZ,
     completed_at            TIMESTAMPTZ,
     bulk_scan_id            TEXT,
@@ -236,20 +307,24 @@ CREATE TABLE scans (
     job_completed_at        TIMESTAMPTZ,
     job_error_code          TEXT NOT NULL DEFAULT '',
     job_error_message       TEXT NOT NULL DEFAULT '',
-    events                  JSONB NOT NULL DEFAULT '[]'::jsonb
+    events                  JSONB NOT NULL DEFAULT '[]'::jsonb,
+    trigger                 TEXT NOT NULL DEFAULT 'Manual',
+    generation_context      TEXT NOT NULL DEFAULT 'Development',
+    CONSTRAINT chk_scans_trigger CHECK (trigger IN ('Manual', 'Webhook', 'CI_CD', 'CI/CD', 'Scheduled', 'API', 'CLI')),
+    CONSTRAINT chk_scans_gen_context CHECK (generation_context IN ('Development', 'Testing', 'Staging', 'Production', 'Pre-production', 'Source', 'Build', 'Binary', 'Deployed'))
 );
 
--- Table 7: sboms
+-- Table 8: sboms
 -- Software Bill of Materials produced by scans, including VCS repository and commit details.
 CREATE TABLE sboms (
-    id                      TEXT PRIMARY KEY,
+    id                      TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
     organization_id         TEXT NOT NULL,
     project_id              TEXT NOT NULL DEFAULT '',
     application_id          TEXT NOT NULL DEFAULT '',
     scan_id                 TEXT NOT NULL,
     catalog_project_id      TEXT,
     catalog_application_id  TEXT,
-    bom_type                TEXT NOT NULL,
+    bom_type                TEXT NOT NULL DEFAULT 'cyclonedx',
     application_version     TEXT NOT NULL DEFAULT '',
     version_strategy        TEXT NOT NULL DEFAULT '',
     repository_url          TEXT NOT NULL DEFAULT '',
@@ -261,7 +336,7 @@ CREATE TABLE sboms (
     scanner_name            TEXT NOT NULL,
     scanner_version         TEXT NOT NULL,
     bom_format_version      TEXT NOT NULL DEFAULT '',
-    generated_at            TIMESTAMPTZ NOT NULL,
+    generated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     raw_metadata            TEXT,
     file_name               TEXT NOT NULL DEFAULT '',
     file_format             TEXT NOT NULL DEFAULT '',
@@ -270,14 +345,14 @@ CREATE TABLE sboms (
     facts_normalized        BOOLEAN NOT NULL DEFAULT FALSE
 );
 
--- Table 8: sbom_components
+-- Table 9: sbom_components
 -- Package or dependency found in an SBOM, including NTIA compliance checks and dependency links.
 CREATE TABLE sbom_components (
-    id                    TEXT PRIMARY KEY,
+    id                    TEXT PRIMARY KEY DEFAULT (gen_random_uuid())::text,
     sbom_id               TEXT NOT NULL,
     name                  TEXT NOT NULL,
     version               TEXT NOT NULL,
-    ecosystem             TEXT NOT NULL,
+    ecosystem             TEXT NOT NULL DEFAULT 'generic',
     package_manager       TEXT NOT NULL DEFAULT '',
     package_url           TEXT NOT NULL DEFAULT '',
     cpe                   TEXT NOT NULL DEFAULT '',
@@ -288,7 +363,7 @@ CREATE TABLE sbom_components (
     is_direct_dependency  BOOLEAN NOT NULL DEFAULT FALSE,
     source_manifest       TEXT NOT NULL DEFAULT '',
     raw_component         TEXT,
-    created_at            TIMESTAMPTZ NOT NULL,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     dependency_depth      INTEGER,
     ntia_supplier         BOOLEAN,
     ntia_name             BOOLEAN,
@@ -298,18 +373,25 @@ CREATE TABLE sbom_components (
     ntia_author           BOOLEAN,
     ntia_timestamp        BOOLEAN,
     depends_on            TEXT[] NOT NULL DEFAULT '{}'::text[],
+    detection_method      TEXT NOT NULL DEFAULT 'Manifest / Lockfile',
+    confidence            INTEGER NOT NULL DEFAULT 100,
+    classification        TEXT NOT NULL DEFAULT 'External',
+    first_detected_at     TIMESTAMPTZ,
+    last_detected_at      TIMESTAMPTZ,
     CONSTRAINT sbom_components_id_sbom_id_key UNIQUE (id, sbom_id),
-    CONSTRAINT sbom_components_dependency_depth_check CHECK (dependency_depth IS NULL OR dependency_depth >= 0)
+    CONSTRAINT sbom_components_dependency_depth_check CHECK (dependency_depth IS NULL OR dependency_depth >= 0),
+    CONSTRAINT chk_sbom_components_confidence CHECK (confidence >= 0 AND confidence <= 100),
+    CONSTRAINT chk_sbom_components_classification CHECK (classification IN ('Internal', 'External', 'Vendor', 'Unknown'))
 );
 
--- Table 9: vulnerabilities
+-- Table 10: vulnerabilities
 -- Canonical CVE repository with CVSS metrics and advisory references.
 CREATE TABLE vulnerabilities (
     id                  TEXT PRIMARY KEY,
     vulnerability_key   TEXT NOT NULL UNIQUE,
     source              TEXT NOT NULL DEFAULT '',
     severity            TEXT NOT NULL DEFAULT 'UNKNOWN',
-    cvss_score          NUMERIC(4,1) NOT NULL DEFAULT 0,
+    cvss_score          NUMERIC NOT NULL DEFAULT 0,
     cvss_vector         TEXT NOT NULL DEFAULT '',
     description         TEXT NOT NULL DEFAULT '',
     reference_urls      TEXT[] NOT NULL DEFAULT '{}'::text[],
@@ -319,7 +401,7 @@ CREATE TABLE vulnerabilities (
     CONSTRAINT vulnerabilities_cvss_score_check CHECK (cvss_score >= 0 AND cvss_score <= 10)
 );
 
--- Table 10: findings
+-- Table 11: findings
 -- One vulnerability match for one package in one SBOM, with triage lifecycle status.
 CREATE TABLE findings (
     id                  TEXT PRIMARY KEY,
@@ -328,7 +410,7 @@ CREATE TABLE findings (
     vulnerability_id    TEXT NOT NULL,
     source              TEXT NOT NULL DEFAULT '',
     severity            TEXT NOT NULL DEFAULT 'UNKNOWN',
-    cvss_score          NUMERIC(4,1) NOT NULL DEFAULT 0,
+    cvss_score          NUMERIC NOT NULL DEFAULT 0,
     cvss_vector         TEXT NOT NULL DEFAULT '',
     description         TEXT NOT NULL DEFAULT '',
     fixed_version       TEXT NOT NULL DEFAULT '',
@@ -343,7 +425,7 @@ CREATE TABLE findings (
     CONSTRAINT findings_cvss_score_check CHECK (cvss_score >= 0 AND cvss_score <= 10)
 );
 
--- Table 11: vulnerability_triage
+-- Table 12: vulnerability_triage
 -- Persistent triage overrides, VEX statements, tickets, and justifications across scans.
 CREATE TABLE vulnerability_triage (
     id                  TEXT PRIMARY KEY,
@@ -351,6 +433,7 @@ CREATE TABLE vulnerability_triage (
     vulnerability_key   TEXT NOT NULL,
     project_name        TEXT NOT NULL DEFAULT '',
     application_name    TEXT NOT NULL DEFAULT '',
+    module_name         TEXT NOT NULL DEFAULT '',
     status              TEXT NOT NULL DEFAULT 'Open',
     vex_status          TEXT NOT NULL DEFAULT 'affected',
     ticket_id           TEXT NOT NULL DEFAULT '',
@@ -361,7 +444,7 @@ CREATE TABLE vulnerability_triage (
         UNIQUE (organization_id, vulnerability_key, project_name, application_name)
 );
 
--- Table 12: schema_migrations
+-- Table 13: schema_migrations
 -- Database migration version history tracker.
 CREATE TABLE schema_migrations (
     version     TEXT PRIMARY KEY,
@@ -373,21 +456,21 @@ CREATE TABLE schema_migrations (
 -- 5. Foreign Key Constraints
 -- ----------------------------------------------------------------------------
 
--- Projects -> Organizations
-ALTER TABLE projects
+-- Applications -> Organizations
+ALTER TABLE applications
     ADD CONSTRAINT projects_organization_id_fkey
     FOREIGN KEY (organization_id)
     REFERENCES organizations(id)
     ON DELETE CASCADE;
 
--- Applications -> Projects
-ALTER TABLE applications
+-- Modules -> Applications
+ALTER TABLE modules
     ADD CONSTRAINT applications_project_id_organization_id_fkey
-    FOREIGN KEY (project_id, organization_id)
-    REFERENCES projects(id, organization_id)
+    FOREIGN KEY (application_id, organization_id)
+    REFERENCES applications(id, organization_id)
     ON DELETE CASCADE;
 
--- Inventory Components -> Organizations, Projects, Applications
+-- Inventory Components -> Organizations, Applications, Modules
 ALTER TABLE inventory_components
     ADD CONSTRAINT fk_inventory_organization
     FOREIGN KEY (organization_id)
@@ -396,14 +479,14 @@ ALTER TABLE inventory_components
 
 ALTER TABLE inventory_components
     ADD CONSTRAINT fk_inventory_project
-    FOREIGN KEY (project_id, organization_id)
-    REFERENCES projects(id, organization_id)
+    FOREIGN KEY (application_id, organization_id)
+    REFERENCES applications(id, organization_id)
     ON DELETE CASCADE;
 
 ALTER TABLE inventory_components
     ADD CONSTRAINT fk_inventory_application
-    FOREIGN KEY (application_id, project_id, organization_id)
-    REFERENCES applications(id, project_id, organization_id)
+    FOREIGN KEY (module_id, application_id, organization_id)
+    REFERENCES modules(id, application_id, organization_id)
     ON DELETE CASCADE;
 
 -- Credentials -> Organizations
@@ -413,7 +496,7 @@ ALTER TABLE credentials
     REFERENCES organizations(id)
     ON DELETE CASCADE;
 
--- Scans -> Organizations, Projects, Applications, SBOMs
+-- Scans -> Organizations, Applications, Modules, SBOMs
 ALTER TABLE scans
     ADD CONSTRAINT scans_organization_id_fkey
     FOREIGN KEY (organization_id)
@@ -423,13 +506,13 @@ ALTER TABLE scans
 ALTER TABLE scans
     ADD CONSTRAINT fk_scans_catalog_project
     FOREIGN KEY (catalog_project_id, organization_id)
-    REFERENCES projects(id, organization_id)
+    REFERENCES applications(id, organization_id)
     ON DELETE RESTRICT;
 
 ALTER TABLE scans
     ADD CONSTRAINT fk_scans_catalog_application
     FOREIGN KEY (catalog_application_id, catalog_project_id, organization_id)
-    REFERENCES applications(id, project_id, organization_id)
+    REFERENCES modules(id, application_id, organization_id)
     ON DELETE RESTRICT;
 
 ALTER TABLE scans
@@ -438,7 +521,7 @@ ALTER TABLE scans
     REFERENCES sboms(id)
     ON DELETE SET NULL;
 
--- SBOMs -> Organizations, Scans, Projects, Applications
+-- SBOMs -> Organizations, Scans, Applications, Modules
 ALTER TABLE sboms
     ADD CONSTRAINT fk_sboms_organization
     FOREIGN KEY (organization_id)
@@ -454,13 +537,13 @@ ALTER TABLE sboms
 ALTER TABLE sboms
     ADD CONSTRAINT fk_sboms_catalog_project
     FOREIGN KEY (catalog_project_id, organization_id)
-    REFERENCES projects(id, organization_id)
+    REFERENCES applications(id, organization_id)
     ON DELETE RESTRICT;
 
 ALTER TABLE sboms
     ADD CONSTRAINT fk_sboms_catalog_application
     FOREIGN KEY (catalog_application_id, catalog_project_id, organization_id)
-    REFERENCES applications(id, project_id, organization_id)
+    REFERENCES modules(id, application_id, organization_id)
     ON DELETE RESTRICT;
 
 -- SBOM Components -> SBOMs
@@ -491,12 +574,23 @@ ALTER TABLE findings
 
 
 -- ----------------------------------------------------------------------------
--- 6. Performance Indexes
+-- 6. Performance & Deduplication Indexes
 -- ----------------------------------------------------------------------------
 
 -- Applications
+CREATE INDEX idx_projects_organization
+    ON applications USING btree (organization_id, name);
+
+CREATE UNIQUE INDEX idx_applications_org_readable_id
+    ON applications USING btree (organization_id, readable_id)
+    WHERE (readable_id <> ''::text);
+
+CREATE UNIQUE INDEX idx_applications_org_lower_name
+    ON applications USING btree (organization_id, lower(name));
+
+-- Modules
 CREATE INDEX idx_applications_project
-    ON applications USING btree (project_id, name);
+    ON modules USING btree (application_id, name);
 
 -- Credentials
 CREATE INDEX idx_credentials_organization
@@ -504,14 +598,20 @@ CREATE INDEX idx_credentials_organization
 
 -- Inventory Components
 CREATE INDEX idx_inventory_components_application
-    ON inventory_components USING btree (application_id);
+    ON inventory_components USING btree (module_id);
 
 CREATE INDEX idx_inventory_components_organization
     ON inventory_components USING btree (organization_id, created_at DESC, id DESC);
 
--- Projects
-CREATE INDEX idx_projects_organization
-    ON projects USING btree (organization_id, name);
+CREATE UNIQUE INDEX uq_inventory_components_identity
+    ON inventory_components USING btree (module_id, name, version, COALESCE(package_url, ''::text), COALESCE(source_file_name, ''::text));
+
+-- Inventory Change Log
+CREATE INDEX idx_inventory_change_log_comp
+    ON inventory_change_log USING btree (component_name, created_at DESC);
+
+CREATE INDEX idx_inventory_change_log_app_mod
+    ON inventory_change_log USING btree (application_id, module_id, created_at DESC);
 
 -- Scans
 CREATE INDEX idx_scans_organization
@@ -537,6 +637,9 @@ CREATE INDEX idx_sbom_components_sbom
 CREATE INDEX idx_sbom_components_name
     ON sbom_components USING btree (name, version);
 
+CREATE UNIQUE INDEX uq_sbom_components_identity
+    ON sbom_components USING btree (sbom_id, name, version, COALESCE(package_url, ''::text), COALESCE(source_manifest, ''::text));
+
 -- Findings
 CREATE INDEX idx_findings_sbom
     ON findings USING btree (sbom_id);
@@ -552,14 +655,16 @@ CREATE INDEX idx_vulnerability_triage_lookup
 -- ----------------------------------------------------------------------------
 -- 7. Table Comments & Documentation
 -- ----------------------------------------------------------------------------
-COMMENT ON TABLE organizations IS 'Tenant. Projects, scans, and credentials belong to one organization.';
-COMMENT ON TABLE projects IS 'Project catalog for one organization.';
-COMMENT ON TABLE applications IS 'Application or service that belongs to one project.';
-COMMENT ON TABLE inventory_components IS 'Package tracked on an application in the software inventory.';
+COMMENT ON TABLE organizations IS 'Tenant. Applications, scans, and credentials belong to one organization.';
+COMMENT ON TABLE applications IS 'Application catalog for one organization (formerly projects).';
+COMMENT ON TABLE modules IS 'Module or service that belongs to one application (formerly applications).';
+COMMENT ON VIEW projects IS 'Backward-compatible view aliasing applications for legacy queries.';
+COMMENT ON TABLE inventory_components IS 'Package tracked on an application module in the software inventory.';
+COMMENT ON TABLE inventory_change_log IS 'Audit log tracking manual inventory additions/removals and vulnerability status changes.';
 COMMENT ON TABLE credentials IS 'Git credential and its encrypted secret.';
 COMMENT ON TABLE scans IS 'One scan execution, its queue fields, bulk row, and progress events.';
 COMMENT ON TABLE sboms IS 'SBOM produced by one scan, including repository and commit text.';
-COMMENT ON TABLE sbom_components IS 'Package found in one SBOM, including NTIA checks and dependency ids.';
+COMMENT ON TABLE sbom_components IS 'Package found in one SBOM, including NTIA checks, detection metadata, and dependency ids.';
 COMMENT ON TABLE vulnerabilities IS 'Canonical CVE or advisory. reference_urls lists its links.';
 COMMENT ON TABLE findings IS 'One vulnerability match for one package in one SBOM.';
 COMMENT ON TABLE vulnerability_triage IS 'Persistent triage overrides, VEX status, ticket IDs, and justifications across scans.';
@@ -570,14 +675,17 @@ COMMENT ON TABLE schema_migrations IS 'Database migration version history tracke
 -- 8. Migration Baseline Seed
 -- ----------------------------------------------------------------------------
 -- Pre-populates migration history so the application migration runner recognizes
--- that all current schema migrations (001 through 007) are already applied.
+-- that all current schema migrations (001 through 010) are already applied.
 INSERT INTO schema_migrations (version, applied_at) VALUES
     ('001_initial.up.sql', CURRENT_TIMESTAMP),
     ('002_security_scans_move.up.sql', CURRENT_TIMESTAMP),
     ('004_software_inventory.up.sql', CURRENT_TIMESTAMP),
     ('005_relational_facts.up.sql', CURRENT_TIMESTAMP),
     ('006_ten_tables.up.sql', CURRENT_TIMESTAMP),
-    ('007_vulnerability_triage.up.sql', CURRENT_TIMESTAMP)
+    ('007_vulnerability_triage.up.sql', CURRENT_TIMESTAMP),
+    ('008_scan_description.up.sql', CURRENT_TIMESTAMP),
+    ('009_inventory_schema_and_table_renames.up.sql', CURRENT_TIMESTAMP),
+    ('010_baseline_improvements.up.sql', CURRENT_TIMESTAMP)
 ON CONFLICT (version) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
