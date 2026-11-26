@@ -337,15 +337,29 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
 
       if (scans?.length) {
-        const jobs = await Promise.all(scans.map(async (scan) => {
+        const completed = [...scans].reverse().filter(s => (s.status || '').toUpperCase() === 'COMPLETED' && s.id);
+        const scanStatsMap = new Map<string, { componentsFound: number; cvesFound: number; criticals: number; highs: number; mediums: number; lows: number }>();
+        for (const done of completed) {
+          try {
+            const stats = await loadScanResults(done.id, done.project_id || done.application_name || '', done.application_name || '');
+            scanStatsMap.set(done.id, {
+              componentsFound: stats.components,
+              cvesFound: stats.cves,
+              criticals: stats.criticals,
+              highs: stats.highs,
+              mediums: stats.mediums,
+              lows: stats.lows,
+            });
+          } catch {}
+        }
+        if (completed.length) setLatestScanId(completed[completed.length - 1].id);
+
+        const jobs = scans.map((scan) => {
           const job = api.mapScan(scan);
           if (scan.status !== 'COMPLETED') return job;
-          try {
-            return { ...job, ...(await api.scanPackageTotals(scan.id)) };
-          } catch {
-            return job;
-          }
-        }));
+          const totals = scanStatsMap.get(scan.id);
+          return totals ? { ...job, ...totals } : job;
+        });
         const bulkIds = [...new Set(jobs.map((job) => job.bulkId).filter((id): id is string => Boolean(id)))];
         const aggregates: ScanJob[] = [];
         for (const bulkId of bulkIds) {
@@ -365,11 +379,6 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         if (openJob) {
           setActiveScan((prev) => prev ?? openJob);
         }
-        const completed = [...scans].reverse().filter(s => (s.status || '').toUpperCase() === 'COMPLETED' && s.id);
-        for (const done of completed) {
-          await loadScanResults(done.id, done.project_id || done.application_name || '', done.application_name || '');
-        }
-        if (completed.length) setLatestScanId(completed[completed.length - 1].id);
       }
 
       if (inventory?.length) {
