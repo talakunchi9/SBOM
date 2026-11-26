@@ -113,17 +113,42 @@ def persist_snapshot_facts(db, snap: dict[str, Any], components: list[dict[str, 
         if source in kept and target in kept:
             children.setdefault(source, []).append(target)
     now = datetime.now(timezone.utc)
+    comp_names = list({str(c.get("name") or "").lower() for c in components if c.get("name")})
+    prior_map: dict[str, Any] = {}
+    if comp_names:
+        placeholders = ",".join("?" for _ in comp_names)
+        try:
+            p_rows = db.execute(
+                f"""SELECT lower(sc.name) AS comp_name, MIN(sc.created_at) AS first_date
+                    FROM sbom_components sc
+                    WHERE lower(sc.name) IN ({placeholders}) AND sc.sbom_id <> ?
+                    GROUP BY lower(sc.name)""",
+                (*comp_names, sbom_id),
+            ).fetchall()
+            for r in p_rows:
+                c_name = _safe_get(r, "comp_name", 0)
+                if c_name:
+                    prior_map[str(c_name).lower()] = _safe_get(r, "first_date", 1)
+        except Exception:
+            pass
+
     for comp in components:
         raw = comp.get("raw") if isinstance(comp.get("raw"), dict) else {}
         status = raw.get("compliance_status") if isinstance(raw.get("compliance_status"), dict) else {}
         flags = [status.get(code) if isinstance(status.get(code), bool) else None for code in _CHECKS]
-        prior = db.execute(
-            """SELECT MIN(sc.created_at) AS first_date
-               FROM sbom_components sc
-               WHERE lower(sc.name) = lower(?) AND sc.sbom_id <> ?""",
-            (comp.get("name") or "", sbom_id),
-        ).fetchone()
-        first_date = _safe_get(prior, "first_date", 0) if prior else None
+        c_name = (comp.get("name") or "").lower()
+        first_date = prior_map.get(c_name)
+        if first_date is None and c_name not in prior_map:
+            try:
+                prior = db.execute(
+                    """SELECT MIN(sc.created_at) AS first_date
+                       FROM sbom_components sc
+                       WHERE lower(sc.name) = lower(?) AND sc.sbom_id <> ?""",
+                    (comp.get("name") or "", sbom_id),
+                ).fetchone()
+                first_date = _safe_get(prior, "first_date", 0) if prior else None
+            except Exception:
+                first_date = None
         first_det = first_date if first_date else now
         db.execute(
             """UPDATE sbom_components

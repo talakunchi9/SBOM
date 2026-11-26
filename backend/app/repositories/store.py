@@ -570,6 +570,90 @@ class BomRepo:
         ).fetchall()
         return {(row[0] or "", row[1] or "", row[2] or "") for row in rows}
 
+    def get_snapshots_stats_batch(self, snapshot_ids: list[str]) -> dict[str, dict[str, Any]]:
+        unique_ids = list(dict.fromkeys(str(sid).strip() for sid in snapshot_ids if str(sid).strip()))
+        if not unique_ids:
+            return {}
+        result: dict[str, dict[str, Any]] = {}
+        placeholders = ",".join("?" for _ in unique_ids)
+        try:
+            with self.db.lock:
+                # 1. Fetch raw_metadata for all snapshots in a single query
+                rows = self.db.execute(
+                    f"SELECT id, raw_metadata FROM sboms WHERE id IN ({placeholders})",
+                    tuple(unique_ids),
+                ).fetchall()
+
+                raw_meta_by_id = {}
+                for r in rows:
+                    raw = {}
+                    if r["raw_metadata"]:
+                        try:
+                            raw = json.loads(r["raw_metadata"]) if isinstance(r["raw_metadata"], str) else dict(r["raw_metadata"])
+                        except Exception:
+                            pass
+                    raw_meta_by_id[str(r["id"])] = raw
+
+                # 2. Fetch component totals & compliance passes in one aggregate query
+                comp_rows = self.db.execute(
+                    f"""SELECT sbom_id, COUNT(*) AS total_count,
+                               SUM(CASE WHEN raw_component LIKE '%"compliance_pass": true%' 
+                                          OR raw_component LIKE '%"compliance_pass":true%' THEN 1 ELSE 0 END) AS compliant_count
+                        FROM sbom_components
+                        WHERE sbom_id IN ({placeholders})
+                        GROUP BY sbom_id""",
+                    tuple(unique_ids),
+                ).fetchall()
+
+                comp_stats_by_id = {}
+                for cr in comp_rows:
+                    comp_stats_by_id[str(cr["sbom_id"])] = {
+                        "total": int(cr["total_count"] or 0),
+                        "compliant": int(cr["compliant_count"] or 0),
+                    }
+
+            for sid in unique_ids:
+                raw_meta = raw_meta_by_id.get(sid, {})
+                matches = raw_meta.get("vulnerability_matches") or []
+                seen = set()
+                critical = 0
+                high = 0
+                medium = 0
+                low = 0
+                for match in matches:
+                    vid = str(match.get("vulnerability_id") or "")
+                    if not vid or vid in seen:
+                        continue
+                    seen.add(vid)
+                    sev = str(match.get("severity") or "").upper()
+                    if sev == "CRITICAL":
+                        critical += 1
+                    elif sev == "HIGH":
+                        high += 1
+                    elif sev == "MEDIUM":
+                        medium += 1
+                    elif sev == "LOW":
+                        low += 1
+
+                c_info = comp_stats_by_id.get(sid, {"total": 0, "compliant": 0})
+                tot = c_info["total"]
+                comp = c_info["compliant"]
+                pct = round((comp / tot) * 100.0, 1) if tot else 0.0
+
+                result[sid] = {
+                    "vuln_count": len(seen),
+                    "vuln_critical": critical,
+                    "vuln_high": high,
+                    "vuln_medium": medium,
+                    "vuln_low": low,
+                    "compliant_components": comp,
+                    "component_count": tot,
+                    "compliance_pct": pct,
+                }
+        except Exception as e:
+            log.warning("get_snapshots_stats_batch error: %s", e)
+        return result
+
     def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
         row = self.db.execute(
             """SELECT id, organization_id, project_id, application_id, scan_id,

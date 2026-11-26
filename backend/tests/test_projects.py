@@ -181,3 +181,53 @@ def test_mitre_targets_still_cover_project_components():
     }
     targets = provider._targets(snap)
     assert len(targets) == 2
+
+
+def test_projects_dashboard_uses_batch_stats():
+    """Verify list_projects leverages get_snapshots_stats_batch when available."""
+    scans = _FakeScans(
+        [
+            {
+                "id": "s1",
+                "organization_id": "default",
+                "project_id": "Gamma",
+                "status": "COMPLETED",
+                "snapshot_id": "snap-g",
+                "created_at": "2026-01-01T00:00:00Z",
+            }
+        ]
+    )
+
+    class _BatchBoms:
+        def __init__(self):
+            self.batch_called = False
+            self.single_called = False
+
+        def get_snapshot(self, snapshot_id: str):
+            self.single_called = True
+            return None
+
+        def get_snapshots_stats_batch(self, snapshot_ids: list[str]):
+            self.batch_called = True
+            return {
+                "snap-g": {
+                    "vuln_count": 1,
+                    "vuln_critical": 1,
+                    "vuln_high": 0,
+                    "vuln_medium": 0,
+                    "vuln_low": 0,
+                    "compliant_components": 5,
+                    "component_count": 5,
+                    "compliance_pct": 100.0,
+                }
+            }
+
+    boms = _BatchBoms()
+    res = list_projects(scans, boms, "default")
+    assert boms.batch_called is True
+    assert boms.single_called is False
+    assert res["summary"]["project_count"] == 1
+    assert res["projects"][0]["name"] == "Gamma"
+    assert res["projects"][0]["vuln_critical"] == 1
+    assert res["projects"][0]["compliance_pct"] == 100.0
+

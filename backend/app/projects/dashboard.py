@@ -82,6 +82,22 @@ def list_projects(
     sbom_files = 0
     compliant_projects = 0
 
+    # Pre-collect snapshot IDs to batch fetch statistics in 2 queries instead of 6N
+    needed_snap_ids = []
+    latest_done_map: dict[str, dict[str, Any]] = {}
+    for key, group in groups.items():
+        completed = [s for s in group["scan_rows"] if (s.get("status") or "").upper() == "COMPLETED" and s.get("snapshot_id")]
+        if completed:
+            latest_done = _latest_scan(completed)
+            latest_done_map[key] = latest_done
+            sid = str(latest_done.get("snapshot_id") or "").strip()
+            if sid:
+                needed_snap_ids.append(sid)
+
+    batch_stats: dict[str, dict[str, Any]] = {}
+    if hasattr(boms, "get_snapshots_stats_batch") and needed_snap_ids:
+        batch_stats = boms.get_snapshots_stats_batch(needed_snap_ids)
+
     for group in groups.values():
         scan_rows = group["scan_rows"]
         total_scans += len(scan_rows)
@@ -89,9 +105,13 @@ def list_projects(
         sbom_files += len({s["snapshot_id"] for s in completed if s.get("snapshot_id")})
 
         latest = _latest_scan(scan_rows)
-        latest_done = _latest_scan(completed) if completed else None
-        snap = boms.get_snapshot(latest_done["snapshot_id"]) if latest_done else None
-        stats = _snapshot_stats(snap) if snap else _empty_stats()
+        latest_done = latest_done_map.get(group["id"])
+        sid = latest_done.get("snapshot_id") if latest_done else None
+        if sid and sid in batch_stats:
+            stats = batch_stats[sid]
+        else:
+            snap = boms.get_snapshot(sid) if sid else None
+            stats = _snapshot_stats(snap) if snap else _empty_stats()
 
         compliance_pct = stats["compliance_pct"]
         if stats["component_count"] > 0 and compliance_pct >= 80.0:
