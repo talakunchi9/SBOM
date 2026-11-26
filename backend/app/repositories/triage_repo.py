@@ -107,8 +107,8 @@ class TriageRepo:
 
         proj_clause = ""
         if project_name:
-            proj_clause = " AND s.project_id = ?"
-            params.append(project_name)
+            proj_clause = " AND (s.project_id = ? OR LOWER(s.project_id) = LOWER(?) OR CAST(s.catalog_project_id AS text) = ?)"
+            params.extend([project_name, project_name, project_name])
 
         query = f"""UPDATE findings
                     SET status = ? {vex_clause}, updated_at = ?
@@ -177,14 +177,37 @@ class TriageRepo:
         changed_by: str = "admin",
     ) -> None:
         try:
+            resolved_app_id = application_id or ""
+            resolved_mod_id = module_id or ""
             with self.db.lock:
+                if resolved_app_id:
+                    try:
+                        row_app = self.db.execute(
+                            "SELECT id FROM applications WHERE organization_id = ? AND (CAST(id AS text) = ? OR LOWER(name) = LOWER(?)) LIMIT 1",
+                            (org, resolved_app_id, resolved_app_id),
+                        ).fetchone()
+                        if row_app:
+                            resolved_app_id = str(row_app["id"])
+                    except Exception:
+                        pass
+                if resolved_mod_id:
+                    try:
+                        row_mod = self.db.execute(
+                            "SELECT id FROM modules WHERE organization_id = ? AND (CAST(id AS text) = ? OR LOWER(name) = LOWER(?)) LIMIT 1",
+                            (org, resolved_mod_id, resolved_mod_id),
+                        ).fetchone()
+                        if row_mod:
+                            resolved_mod_id = str(row_mod["id"])
+                    except Exception:
+                        pass
+
                 self.db.execute(
                     """INSERT INTO inventory_change_log (
                          id, organization_id, application_id, module_id, component_name, component_version,
                          action, old_value, new_value, reason, changed_by, created_at
                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
                     (
-                        str(uuid.uuid4()), org, application_id or "", module_id or "",
+                        str(uuid.uuid4()), org, resolved_app_id, resolved_mod_id,
                         component_name or "", component_version or "", action,
                         json.dumps(old_value) if old_value is not None else None,
                         json.dumps(new_value) if new_value is not None else None,
@@ -199,31 +222,41 @@ class TriageRepo:
         with self.db.lock:
             if comp_name:
                 rows = self.db.execute(
-                    """SELECT id, organization_id, application_id, module_id, component_name, component_version,
-                              action, reason, changed_by, created_at
-                       FROM inventory_change_log
-                       WHERE organization_id = ? AND LOWER(component_name) = LOWER(?)
-                       ORDER BY created_at DESC
+                    """SELECT l.id, l.organization_id, l.application_id, l.module_id, l.component_name, l.component_version,
+                              l.action, l.reason, l.changed_by, l.created_at,
+                              app.name AS application_name,
+                              m.name AS module_name
+                       FROM inventory_change_log l
+                       LEFT JOIN applications app ON (CAST(app.id AS text) = l.application_id OR LOWER(app.name) = LOWER(l.application_id))
+                       LEFT JOIN modules m ON (CAST(m.id AS text) = l.module_id OR LOWER(m.name) = LOWER(l.module_id))
+                       WHERE l.organization_id = ? AND LOWER(l.component_name) = LOWER(?)
+                       ORDER BY l.created_at DESC
                        LIMIT ?""",
                     (org, comp_name, limit),
                 ).fetchall()
             else:
                 rows = self.db.execute(
-                    """SELECT id, organization_id, application_id, module_id, component_name, component_version,
-                              action, reason, changed_by, created_at
-                       FROM inventory_change_log
-                       WHERE organization_id = ?
-                       ORDER BY created_at DESC
+                    """SELECT l.id, l.organization_id, l.application_id, l.module_id, l.component_name, l.component_version,
+                              l.action, l.reason, l.changed_by, l.created_at,
+                              app.name AS application_name,
+                              m.name AS module_name
+                       FROM inventory_change_log l
+                       LEFT JOIN applications app ON (CAST(app.id AS text) = l.application_id OR LOWER(app.name) = LOWER(l.application_id))
+                       LEFT JOIN modules m ON (CAST(m.id AS text) = l.module_id OR LOWER(m.name) = LOWER(l.module_id))
+                       WHERE l.organization_id = ?
+                       ORDER BY l.created_at DESC
                        LIMIT ?""",
                     (org, limit),
                 ).fetchall()
 
         return [
             {
-                "id": r["id"],
+                "id": str(r["id"]),
                 "organization_id": r["organization_id"],
                 "application_id": r["application_id"],
+                "application_name": r.get("application_name") or r["application_id"],
                 "module_id": r["module_id"],
+                "module_name": r.get("module_name") or r["module_id"],
                 "component_name": r["component_name"],
                 "component_version": r["component_version"],
                 "action": r["action"],

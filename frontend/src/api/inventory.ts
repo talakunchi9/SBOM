@@ -109,7 +109,9 @@ export interface InventoryAuditLogItem {
   id: string;
   organization_id: string;
   application_id: string;
+  application_name?: string;
   module_id: string;
+  module_name?: string;
   component_name: string;
   component_version: string;
   action: string;

@@ -73,7 +73,7 @@ export const InventoryAuditLogDrawer: React.FC<InventoryAuditLogDrawerProps> = (
                 </p>
                 <div className="text-[10px] text-gray-400 flex items-center justify-between pt-1 border-t border-gray-100 dark:border-gray-800/60">
                   <span>By: {item.changed_by}</span>
-                  <span>{item.application_id || 'System'}</span>
+                  <span>{item.application_name || item.application_id || 'System'}</span>
                 </div>
               </div>
             ))

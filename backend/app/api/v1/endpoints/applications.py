@@ -51,14 +51,5 @@ async def update_app_lifecycle_status(target_name_or_id: str, request: Request):
                WHERE organization_id = ? AND (id = ? OR LOWER(name) = LOWER(?))""",
             (norm_status, now, org, target_name_or_id, target_name_or_id),
         )
-        try:
-            db.execute(
-                """UPDATE projects 
-                   SET lifecycle_status = ?, updated_at = ? 
-                   WHERE organization_id = ? AND (id = ? OR LOWER(name) = LOWER(?))""",
-                (norm_status, now, org, target_name_or_id, target_name_or_id),
-            )
-        except Exception:
-            pass
         finish(db)
     return envelope({"target": target_name_or_id, "lifecycle_status": norm_status}, rid)

@@ -279,13 +279,13 @@ class Orchestrator:
                FROM sboms s
                JOIN scans sc ON sc.id = s.scan_id
                WHERE s.organization_id = ?
-                 AND s.project_id = ?
-                 AND (? = '' OR s.application_id = ?)
+                 AND (s.project_id = ? OR LOWER(s.project_id) = LOWER(?))
+                 AND (? = '' OR s.application_id = ? OR LOWER(s.application_id) = LOWER(?))
                  AND LOWER(sc.scan_status) = 'completed'
                  AND s.id != ?
                ORDER BY s.generated_at DESC
                LIMIT 1""",
-            (org_id, project_name, app_name, app_name, snap["id"]),
+            (org_id, project_name, project_name, app_name, app_name, app_name, snap["id"]),
         ).fetchone()
 
         if not prior_row:
