@@ -1085,10 +1085,19 @@ export const AppStateProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const exportSBOM = (format: 'spdx' | 'cyclonedx' | 'csv' | 'json', scanId?: string) => {
     const exportId = scanId || latestScanId;
     const targetScan = exportId ? scansHistory.find(s => s.id === exportId) : null;
-    const projName = targetScan?.targetProject || 'sbom-project';
-    const cleanProj = projName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-    const ext = format === 'spdx' ? 'spdx.json' : format === 'cyclonedx' ? 'cdx.json' : format === 'csv' ? 'csv' : 'json';
-    const downloadName = `${cleanProj}-${exportId || Date.now()}.${ext}`;
+    // Use application name for user-friendly export filenames without UUIDs
+    const rawAppName = (targetScan?.targetProject || 'application').trim();
+    const projName = rawAppName;
+    const cleanApp = rawAppName.replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._-]+|[._-]+$/g, '') || 'application';
+    const cleanProj = cleanApp.toLowerCase();
+    const downloadName =
+      format === 'spdx'
+        ? `${cleanApp}_spdx.json`
+        : format === 'cyclonedx'
+          ? `${cleanApp}_cyclonedx.json`
+          : format === 'csv'
+            ? `${cleanApp}_csv.csv`
+            : `${cleanApp}_json.json`;
 
     const downloadClientFile = () => {
       let content = '';

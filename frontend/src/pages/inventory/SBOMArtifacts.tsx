@@ -1053,24 +1053,7 @@ export const SBOMArtifacts: React.FC = () => {
                 </div>
               </div>
 
-              <div className="p-3 bg-white dark:bg-gray-800/40 rounded-lg border border-gray-100 dark:border-gray-800">
-                <div className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">Scan ID</div>
-                <div className="font-mono text-[11px] text-gray-700 dark:text-gray-300 mt-0.5 flex items-center justify-between">
-                  <span className="truncate">{selectedArtifactDetails.scanId}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyText(selectedArtifactDetails.scanId, 'scanid')}
-                    className="p-0.5 text-gray-400 hover:text-blue-600 cursor-pointer"
-                    title="Copy scan ID"
-                  >
-                    {copiedId === 'scanid' ? (
-                      <Check className="w-3 h-3 text-emerald-500" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
-                    )}
-                  </button>
-                </div>
-              </div>
+              {/* UUID intentionally hidden from UI */}
 
               <div className="p-3 bg-white dark:bg-gray-800/40 rounded-lg border border-gray-100 dark:border-gray-800">
                 <div className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">Generated / Uploaded</div>

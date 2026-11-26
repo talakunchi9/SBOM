@@ -2527,9 +2527,7 @@ export const SecurityScans: React.FC = () => {
                       <h2 className="text-base font-bold text-gray-900 dark:text-white">
                         {activeScan.targetProject}
                       </h2>
-                      <span className="font-mono text-xs px-2 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-300">
-                        {activeScan.id}
-                      </span>
+                      {/* UUID intentionally hidden from UI */}
                       <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${scanFailed
                         ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
                         : activeScan.status === 'completed'
@@ -2861,7 +2859,7 @@ export const SecurityScans: React.FC = () => {
               <table className="w-full text-left text-xs min-w-[1100px]">
                 <thead>
                   <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">JOB ID</th>
+                    {/* UUID intentionally hidden from UI */}
                     <th className="py-3 px-3 font-semibold whitespace-nowrap">PROJECT & TAG</th>
                     <th className="py-3 px-3 font-semibold whitespace-nowrap">SOURCE</th>
                     <th className="py-3 px-3 font-semibold whitespace-nowrap">STATUS</th>
@@ -2875,9 +2873,7 @@ export const SecurityScans: React.FC = () => {
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                   {filteredHistory.map((job) => (
                     <tr key={job.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40">
-                      <td className="py-3 font-mono font-semibold text-blue-600 dark:text-blue-400">
-                        {job.id}
-                      </td>
+                      {/* UUID intentionally hidden from UI */}
                       <td className="py-3">
                         <span className="font-bold text-gray-900 dark:text-white block">{job.targetProject}</span>
                         <span className="text-[10px] text-gray-400 font-mono">{job.releaseTag || 'v1.0.0'}</span>

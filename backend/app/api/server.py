@@ -898,10 +898,10 @@ def build(cfg: Config | None = None) -> FastAPI:
             except KeyError:
                 return _error("UNSUPPORTED_FORMAT", "unsupported format", rid(request), 400)
 
-            clean_proj = (bulk.get("project_id") or "bulk-scan").lower().replace(" ", "-")
-            normalized = normalize_format(format_name)
-            ext = "spdx.json" if normalized == "spdx-json" else "cdx.json" if normalized == "cyclonedx-json" else "csv" if normalized == "csv" else "xlsx"
-            headers = {"Content-Disposition": f'attachment; filename="{clean_proj}-{scan_id}.{ext}"'}
+            # Use application name for user-friendly export filenames without UUIDs
+            app_label = bulk.get("project_id") or "application"
+            filename = _export_filename(app_label, format_name)
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
             return Response(payload, media_type=content_type, headers=headers)
 
         return _error("SCAN_NOT_FOUND", "not found", rid(request), 404)
@@ -923,10 +923,10 @@ def build(cfg: Config | None = None) -> FastAPI:
         except KeyError:
             return _error("UNSUPPORTED_FORMAT", "unsupported format", rid(request), 400)
 
-        proj = (snap.get("project_id") or snap.get("application_id") or bom_id).lower().replace(" ", "-")
-        normalized = normalize_format(format)
-        ext = "spdx.json" if normalized == "spdx-json" else "cdx.json" if normalized == "cyclonedx-json" else "csv" if normalized == "csv" else "xlsx"
-        headers = {"Content-Disposition": f'attachment; filename="{proj}-{bom_id}.{ext}"'}
+        # Use application name for user-friendly export filenames without UUIDs
+        app_label = snap.get("project_id") or snap.get("application_id") or "application"
+        filename = _export_filename(app_label, format)
+        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
         return Response(payload, media_type=content_type, headers=headers)
 
     @app.get("/api/v1/applications/{application_id}/boms")
@@ -1399,6 +1399,23 @@ def _bind_inventory_item(catalog: CatalogRepo, org: str, item: Any) -> dict[str,
 def _safe_name(name: str) -> str:
     base = name.replace("\\", "/").split("/")[-1]
     return base.replace("..", "")
+
+
+def _export_filename(app_name: str, format_name: str) -> str:
+    """Build a sanitized, user-friendly export filename using the application name (no UUIDs)."""
+    import re
+
+    raw = (app_name or "").strip()
+    # Replace characters unsafe for filesystems while preserving readable casing (e.g. WorkforceEdge)
+    clean_app = re.sub(r"[^A-Za-z0-9._-]+", "_", raw).strip("._-") or "application"
+    normalized = normalize_format(format_name)
+    if normalized == "spdx-json":
+        return f"{clean_app}_spdx.json"
+    if normalized == "cyclonedx-json":
+        return f"{clean_app}_cyclonedx.json"
+    if normalized == "csv":
+        return f"{clean_app}_csv.csv"
+    return f"{clean_app}_xlsx.xlsx"
 
 
 def _owned(scans: ScanRepo, scan_id: str, org: str):

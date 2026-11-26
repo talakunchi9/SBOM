@@ -32,7 +32,7 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
   rescanning = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [exportExpanded, setExportExpanded] = useState(true);
+  const [exportExpanded, setExportExpanded] = useState(false);
   const [menuCoords, setMenuCoords] = useState<{
     top?: number;
     bottom?: number;
@@ -58,6 +58,7 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isOpen) {
+      setExportExpanded(false);
       updatePosition();
       setIsOpen(true);
     } else {
@@ -142,11 +143,10 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
         title="More actions"
         aria-label="Scan actions"
         aria-expanded={isOpen}
-        className={`p-1.5 rounded-lg border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${
-          isOpen
+        className={`p-1.5 rounded-lg border transition-all cursor-pointer shadow-2xs flex items-center justify-center ${isOpen
             ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600 ring-2 ring-blue-500/20'
             : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-        }`}
+          }`}
       >
         <MoreVertical className="w-4 h-4" />
       </button>
@@ -172,13 +172,11 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
                   Scan Actions
                 </span>
-                <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500 truncate max-w-[100px]">
-                  {scan.id}
-                </span>
+                {/* UUID intentionally hidden from UI */}
               </div>
-              <p className="text-xs font-semibold text-gray-900 dark:text-white truncate mt-0.5" title={scan.targetProject}>
+              {/* <p className="text-xs font-semibold text-gray-900 dark:text-white truncate mt-0.5" title={scan.targetProject}>
                 {scan.targetProject}
-              </p>
+              </p> */}
             </div>
 
             {/* Option 1: View Details */}
@@ -206,11 +204,10 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
               <button
                 type="button"
                 onClick={() => setExportExpanded((prev) => !prev)}
-                className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-between gap-2 group ${
-                  exportExpanded
+                className={`w-full text-left px-3 py-2 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center justify-between gap-2 group ${exportExpanded
                     ? 'bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
                     : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'
-                }`}
+                  }`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-7 h-7 rounded-lg bg-emerald-100/70 dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
@@ -226,9 +223,8 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
                   </div>
                 </div>
                 <ChevronRight
-                  className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 shrink-0 ${
-                    exportExpanded ? 'rotate-90 text-emerald-600 dark:text-emerald-400' : ''
-                  }`}
+                  className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 shrink-0 ${exportExpanded ? 'rotate-90 text-emerald-600 dark:text-emerald-400' : ''
+                    }`}
                 />
               </button>
 
@@ -349,11 +345,10 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
                   className="w-full text-left px-3 py-2 text-xs font-semibold rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2.5 transition-colors cursor-pointer group"
                 >
                   <div
-                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform ${
-                      (scan.lifecycleStatus || 'Active').toLowerCase() === 'active'
+                    className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform ${(scan.lifecycleStatus || 'Active').toLowerCase() === 'active'
                         ? 'bg-rose-100/80 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400'
                         : 'bg-emerald-100/80 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400'
-                    }`}
+                      }`}
                   >
                     {(scan.lifecycleStatus || 'Active').toLowerCase() === 'active' ? (
                       <Power className="w-3.5 h-3.5" />
