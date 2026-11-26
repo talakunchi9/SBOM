@@ -64,6 +64,10 @@ import { PipelineGrid, ScanResultDetails } from './ScanResultDetails';
 import { displayStatus, formatDuration, formatEventTime, formatScanTimestamp12h, isOpenStatus, stageLabel } from './scanProgress';
 import { ScanActionMenu } from './ScanActionMenu';
 import { TablePagination } from '../../components/common/TablePagination';
+import { ScansTableTab } from './components/ScansTableTab';
+import { LiveScanMonitorTab } from './components/LiveScanMonitorTab';
+import { ScanHistoryTab } from './components/ScanHistoryTab';
+import { ScanSchedulesTab, CreateScheduleModal, type ScanScheduleItem } from './components/ScanSchedulesTab';
 
 export const SecurityScans: React.FC = () => {
   const { tab } = useParams<{ tab?: string }>();
@@ -1005,17 +1009,6 @@ export const SecurityScans: React.FC = () => {
     return matchSearch && matchStatus;
   });
 
-  interface ScanScheduleItem {
-    id: string;
-    name: string;
-    project: string;
-    frequency: string;
-    days: string;
-    nextRun: string;
-    lastRun: string;
-    enabled: boolean;
-  }
-
   const SCHEDULES_STORAGE_KEY = 'squad1_sbom_schedules';
 
   const [schedulesList, setSchedulesList] = useState<ScanScheduleItem[]>(() => {
@@ -1088,270 +1081,30 @@ export const SecurityScans: React.FC = () => {
       {/* 0. COMPONENTS TABLE SUB-PAGE (DEFAULT VIEW FOR SECURITY SCANS)            */}
       {/* ========================================================================= */}
       {activeTab === 'table' && (
-        <div className="space-y-6">
-          {/* Search & Action Bar */}
-          <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-4 shadow-2xs space-y-3">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              {/* Left: Search Input & Filter Toggle */}
-              <div className="flex items-center gap-2 flex-1 max-w-xl">
-                <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={scanSearch}
-                    onChange={(e) => setScanSearch(e.target.value)}
-                    placeholder="Search by project name, application, scan type, status, or requester..."
-                    className="w-full pl-9 pr-4 py-2 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 hover:border-blue-300 dark:hover:border-blue-700 transition-colors shadow-2xs"
-                  />
-                </div>
-
-                {/* Filter Toggle Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowScanFilters((prev) => !prev)}
-                  className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0 ${showScanFilters || scanStatusFilter !== 'All' || scanTypeFilter !== 'All'
-                    ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
-                    : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600'
-                    }`}
-                  title="Toggle Filters"
-                >
-                  <Filter className="w-3.5 h-3.5" />
-                  <span>Filters</span>
-                  {(scanStatusFilter !== 'All' || scanTypeFilter !== 'All') && (
-                    <span className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
-                  )}
-                </button>
-              </div>
-
-              {/* Right: ONLY ONE BUTTON: Launch Scan (No components count pill!) */}
-              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                <button
-                  onClick={goToLaunchScan}
-                  className="px-3.5 py-2 text-xs font-bold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-lg flex items-center gap-1.5 shadow-sm shadow-blue-500/20 cursor-pointer transition-all whitespace-nowrap"
-                  title="Launch Security Scan"
-                >
-                  <Play className="w-3.5 h-3.5 shrink-0 fill-white" />
-                  <span>Launch Scan</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Filter Dropdowns revealed upon clicking Filter icon */}
-            {showScanFilters && (
-              <div className="p-3 bg-gray-50/90 dark:bg-gray-800/60 border border-gray-200/80 dark:border-gray-700/80 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fadeIn">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mr-1">
-                    Filter by:
-                  </span>
-
-                  <select
-                    value={scanStatusFilter}
-                    onChange={(e) => setScanStatusFilter(e.target.value)}
-                    className="text-xs px-2.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-2xs hover:border-blue-300 transition-colors"
-                  >
-                    <option value="All">All Statuses</option>
-                    <option value="completed">Completed</option>
-                    <option value="running">Running</option>
-                    <option value="queued">Queued</option>
-                    <option value="failed">Failed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-
-                  <select
-                    value={scanTypeFilter}
-                    onChange={(e) => setScanTypeFilter(e.target.value)}
-                    className="text-xs px-2.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-2xs hover:border-blue-300 transition-colors"
-                  >
-                    <option value="All">All Scan Types</option>
-                    <option value="Local Source">Local Source</option>
-                    <option value="Remote Git">Remote Git</option>
-                    <option value="Bulk Scan">Bulk Scan</option>
-                  </select>
-
-                  <button
-                    onClick={handleResetScanFilters}
-                    className="px-2.5 py-1.5 text-xs font-semibold text-gray-600 hover:text-red-600 dark:text-gray-300 dark:hover:text-red-400 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-950/40 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs ml-1"
-                    title="Reset Filters"
-                  >
-                    <RotateCcw className="w-3 h-3 text-gray-400" />
-                    <span>Reset</span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Table View */}
-            <div className="overflow-x-auto rounded-lg border border-gray-100 dark:border-gray-800">
-              <table className="w-full text-left text-xs min-w-[1200px]">
-                <thead>
-                  <tr className="bg-slate-50/90 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200/80 dark:border-slate-700/80">
-                    <th className="w-[22%] min-w-[200px] py-3.5 pl-5 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
-                    <th className="w-[14%] min-w-[130px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">MODULE NAME</th>
-                    <th className="w-[15%] min-w-[150px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN DATE</th>
-                    <th className="w-[13%] min-w-[130px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN STATUS</th>
-                    <th className="w-[11%] min-w-[110px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">SCAN TYPE</th>
-                    <th className="w-[11%] min-w-[120px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">LIFECYCLE STATUS</th>
-                    <th className="w-[10%] min-w-[120px] py-3.5 px-4 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">CREATED BY</th>
-                    <th className="w-[4%] min-w-[70px] py-3.5 pr-5 pl-3 font-bold uppercase tracking-wider text-[11px] text-right whitespace-nowrap">ACTIONS</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {filteredScans.length > 0 ? (
-                    paginatedScans.map((s) => (
-                      <tr key={s.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
-                        {/* APPLICATION NAME */}
-                        <td className="py-3.5 pl-5 pr-3 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <FolderGit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-                            <span
-                              onClick={() => setSelectedScanId(s.id)}
-                              className="font-bold text-gray-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
-                              title={`View ${s.targetProject} details`}
-                            >
-                              {s.targetProject}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* MODULE NAME */}
-                        <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
-                            {s.appService || '—'}
-                          </span>
-                        </td>
-
-                        {/* SCAN DATE */}
-                        <td className="py-3.5 px-4 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">
-                          {formatScanTimestamp12h(s.timestamp)}
-                        </td>
-
-                        {/* SCAN STATUS */}
-                        <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${s.status === 'completed'
-                            ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
-                            : s.status === 'running' || s.status === 'analyzing'
-                              ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60 animate-pulse'
-                              : s.status === 'failed'
-                                ? 'bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60'
-                                : s.status === 'cancelled'
-                                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
-                                  : 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60'
-                            }`}>
-                            {s.status === 'running' || s.status === 'analyzing' ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-ping" />
-                            ) : s.status === 'completed' ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                            ) : s.status === 'cancelled' ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-                            ) : s.status === 'failed' ? (
-                              <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
-                            ) : (
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                            )}
-                            {displayStatus(s.status)}
-                            {(s.status === 'running' || s.status === 'analyzing') && ` ${s.progress}%`}
-                          </span>
-                        </td>
-
-                        {/* SCAN TYPE */}
-                        <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
-                            {s.scanType}
-                          </span>
-                        </td>
-
-                        {/* LIFECYCLE STATUS */}
-                        <td className="py-3.5 px-4 whitespace-nowrap">
-                          {(() => {
-                            const statusStr = (s.lifecycleStatus || 'Active').trim();
-                            const isDecom = statusStr.toLowerCase() === 'decommissioned' || statusStr.toLowerCase() === 'inactive';
-                            const isActive = !isDecom;
-                            return (
-                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                isActive
-                                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60'
-                                  : 'bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700'
-                              }`}>
-                                <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-slate-500'}`} />
-                                {isActive ? 'Active' : 'Decommissioned'}
-                              </span>
-                            );
-                          })()}
-                        </td>
-
-                        {/* SCAN REQUESTED BY */}
-                        <td className="py-3.5 px-4 whitespace-nowrap">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 flex items-center justify-center text-[10px] font-bold shrink-0">
-                              <User className="w-3 h-3" />
-                            </div>
-                            <span className="text-gray-700 dark:text-gray-300 font-medium text-xs">
-                              {(s as any).requestedBy || (s as any).createdBy || 'Asha Mehta'}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* ACTIONS */}
-                        <td className="py-3.5 pr-5 pl-3 text-right whitespace-nowrap">
-                          <div className="inline-flex items-center justify-end">
-                            <ScanActionMenu
-                              scan={s}
-                              onViewDetails={(scan) => setSelectedScanId(scan.id)}
-                              onExport={(format, scanId) => exportSBOM(format, scanId)}
-                              onRescan={handleRescan}
-                              onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
-                              rescanning={rescanningId === s.id}
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={8} className="py-8 px-4 text-center">
-                        <div className="flex flex-col items-center justify-center space-y-2">
-                          <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center justify-center shadow-2xs">
-                            <Search className="w-5 h-5" />
-                          </div>
-                          <div className="max-w-md mx-auto">
-                            <h4 className="text-sm font-bold text-gray-900 dark:text-white">
-                              No security scans available yet.
-                            </h4>
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                              No scan records found. Real security scans will appear once analysis is launched.
-                            </p>
-                          </div>
-                          {(scanSearch || scanStatusFilter !== 'All' || scanTypeFilter !== 'All') && (
-                            <button
-                              onClick={handleResetScanFilters}
-                              className="mt-1 px-3.5 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-750 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer inline-flex items-center gap-1.5"
-                            >
-                              Clear Filters
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Systematic Pagination Controls (15, 20, 25, 50, 100) */}
-            <TablePagination
-              currentPage={safeScanPage}
-              totalItems={totalScans}
-              pageSize={scanPageSize}
-              pageSizeOptions={[15, 20, 25, 50, 100]}
-              onPageChange={(page) => setScanPage(page)}
-              onPageSizeChange={(size) => {
-                setScanPageSize(size);
-                setScanPage(1);
-              }}
-              itemLabel="scans"
-            />
-          </div>
-        </div>
+        <ScansTableTab
+          scanSearch={scanSearch}
+          onScanSearchChange={setScanSearch}
+          showScanFilters={showScanFilters}
+          onToggleScanFilters={() => setShowScanFilters((prev) => !prev)}
+          scanStatusFilter={scanStatusFilter}
+          onScanStatusFilterChange={setScanStatusFilter}
+          scanTypeFilter={scanTypeFilter}
+          onScanTypeFilterChange={setScanTypeFilter}
+          onResetFilters={handleResetScanFilters}
+          onLaunchScan={goToLaunchScan}
+          filteredScans={filteredScans}
+          paginatedScans={paginatedScans}
+          safeScanPage={safeScanPage}
+          totalScans={totalScans}
+          scanPageSize={scanPageSize}
+          onPageChange={setScanPage}
+          onPageSizeChange={setScanPageSize}
+          rescanningId={rescanningId}
+          onSelectScan={setSelectedScanId}
+          onExport={exportSBOM}
+          onRescan={handleRescan}
+          onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -2467,612 +2220,63 @@ export const SecurityScans: React.FC = () => {
       {/* 2. LIVE JOBS SUB-PAGE (Workspace UI Spec Section 11)                      */}
       {/* ========================================================================= */}
       {activeTab === 'live' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between pb-1">
-            <button
-              type="button"
-              onClick={goToLaunchScan}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer transition-colors"
-              title="Back to Launch Scan"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back</span>
-            </button>
-          </div>
-          {waitingScans.length > 0 && (
-            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl shadow-2xs overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Waiting in queue</h2>
-                <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                  {waitingScans.length} not started
-                </span>
-              </div>
-              <div className="divide-y divide-gray-100 dark:divide-gray-800">
-                {waitingScans.map((scan) => (
-                  <div key={scan.id} className="px-5 py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{scan.targetProject}</p>
-                      <p className="text-[11px] text-gray-500 truncate">{scan.appService || scan.scanType} · {scan.source}</p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={cancellingId === scan.id}
-                      onClick={() => handleCancel(scan)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-rose-300 hover:text-rose-700 dark:hover:text-rose-300 text-xs font-semibold cursor-pointer disabled:opacity-50 shrink-0"
-                    >
-                      <Ban className="w-3.5 h-3.5" />
-                      {cancellingId === scan.id ? 'Stopping' : 'Cancel'}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {activeScan ? (
-            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-6 shadow-2xs space-y-6">
-              {/* Job Summary Banner */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100 dark:border-gray-800">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${scanFailed
-                    ? 'bg-red-50 dark:bg-red-950/40 text-red-600'
-                    : activeScan.status === 'completed'
-                      ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600'
-                      : 'bg-blue-50 dark:bg-blue-950/60 text-blue-600'
-                    }`}>
-                    {scanFailed ? <AlertTriangle className="w-5 h-5" /> : activeScan.status === 'completed' ? <CheckCircle2 className="w-5 h-5" /> : <Radio className={`w-5 h-5 ${isOpenStatus(activeScan.status) ? 'animate-pulse' : ''}`} />}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-base font-bold text-gray-900 dark:text-white">
-                        {activeScan.targetProject}
-                      </h2>
-                      {/* UUID intentionally hidden from UI */}
-                      <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase ${scanFailed
-                        ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
-                        : activeScan.status === 'completed'
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                          : activeScan.status === 'cancelled'
-                            ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                            : 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300'
-                        }`}>
-                        {displayStatus(activeScan.status)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                      {activeScan.scanType} • {activeScan.source}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs">
-                  <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400 mr-2">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <span>{isOpenStatus(activeScan.status) ? (activeScan.startedAt ? 'Elapsed' : 'Queue') : 'Duration'}: <strong className="text-gray-900 dark:text-white font-mono">{activeScan.startedAt ? formatDuration(activeScan.startedAt, isOpenStatus(activeScan.status) ? undefined : activeScan.completedAt, now) : 'Waiting to start'}</strong></span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={goToLaunchScan}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-gray-50 dark:hover:bg-slate-800 text-xs font-semibold cursor-pointer transition-colors shadow-2xs"
-                    title="Back to Launch Scan"
-                  >
-                    <ArrowLeft className="w-3.5 h-3.5" />
-                    Back
-                  </button>
-                  {canCancel(activeScan.status) && (
-                    <button
-                      type="button"
-                      disabled={cancellingId === activeScan.id}
-                      onClick={() => handleCancel(activeScan)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-rose-300 hover:text-rose-700 dark:hover:text-rose-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                    >
-                      <Ban className="w-3.5 h-3.5" />
-                      {cancellingId === activeScan.id ? 'Stopping' : 'Cancel scan'}
-                    </button>
-                  )}
-                  {canRescan(activeScan.status) && !activeScan.isBulkAggregate && (
-                    <button
-                      type="button"
-                      disabled={rescanningId === activeScan.id}
-                      onClick={() => handleRescan(activeScan)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-blue-400 hover:text-blue-700 dark:hover:text-blue-300 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                    >
-                      <RotateCcw className={`w-3.5 h-3.5 ${rescanningId === activeScan.id ? 'animate-spin' : ''}`} />
-                      {rescanningId === activeScan.id ? 'Queuing' : 'Rescan'}
-                    </button>
-                  )}
-                  {activeScan.status === 'completed' && (
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/vulnerabilities?project=${encodeURIComponent(activeScan.targetProject)}`)}
-                      className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white rounded-lg text-xs font-semibold cursor-pointer shadow-2xs flex items-center gap-1.5 transition-colors"
-                      title={`View all findings for ${activeScan.targetProject} in Vulnerability Management`}
-                    >
-                      <Shield className="w-3.5 h-3.5" />
-                      <span>View Findings ({activeScan.cvesFound || 0})</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setSelectedScanId(activeScan.id)}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold cursor-pointer"
-                  >
-                    View results
-                  </button>
-                </div>
-              </div>
-
-              {activeScan.errorMessage && (scanFailed || activeScan.status === 'cancelled') && (
-                <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-xs text-red-800 dark:text-red-200">
-                  <span className="font-bold">{activeScan.errorCode || 'Error'}: </span>
-                  {activeScan.errorMessage}
-                </div>
-              )}
-
-              <div>
-                <div className="flex justify-between text-xs font-semibold mb-1.5">
-                  <span className="text-gray-700 dark:text-gray-300">
-                    {activeScan.isBulkAggregate ? 'Batch progress' : stageLabel(activeScan.stage)}
-                  </span>
-                  <span className={`font-mono font-bold ${scanFailed ? 'text-red-600' : activeScan.status === 'completed' ? 'text-emerald-600' : 'text-blue-600 dark:text-blue-400'}`}>{activeScan.progress}%</span>
-                </div>
-                <div className="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`${scanFailed ? 'bg-red-500' : activeScan.status === 'cancelled' ? 'bg-slate-400' : activeScan.status === 'completed' ? 'bg-emerald-500' : 'bg-blue-600'} h-2 rounded-full transition-all duration-500`}
-                    style={{ width: `${activeScan.progress}%` }}
-                  />
-                </div>
-              </div>
-
-              {activeScan.isBulkAggregate && (
-                <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="text-gray-500 border-b border-gray-100 dark:border-gray-800">
-                        <th className="px-3 py-2 font-semibold">Project</th>
-                        <th className="px-3 py-2 font-semibold">Repository</th>
-                        <th className="px-3 py-2 font-semibold">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                      {(activeScan.bulkItems || []).map((item) => {
-                        const child = bulkChildren.find((scan) => scan.id === item.scanId);
-                        const status = child?.status || item.status.toLowerCase();
-                        return (
-                          <tr key={`${item.rowNumber}-${item.scanId || item.repositoryUrl}`}>
-                            <td className="px-3 py-2 font-semibold text-gray-900 dark:text-white">{item.projectName || item.applicationName || '—'}</td>
-                            <td className="px-3 py-2 font-mono text-gray-500 max-w-[240px] truncate">{item.repositoryUrl}</td>
-                            <td className="px-3 py-2">
-                              <span className="uppercase font-bold text-[10px]">{displayStatus(status)}</span>
-                              {child && (child.status === 'running' || child.status === 'analyzing') && (
-                                <span className="text-gray-500"> · {stageLabel(child.stage)} {child.progress}%</span>
-                              )}
-                              {item.errorMessage && status !== 'completed' && status !== 'running' && status !== 'queued' && status !== 'analyzing' && (
-                                <p className="text-[10px] text-red-600 dark:text-red-400 mt-0.5">{item.errorMessage}</p>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {pipelineScan && (
-                <div className="space-y-2">
-                  {activeScan.isBulkAggregate && (
-                    <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                      Current row: {pipelineScan.targetProject} · {stageLabel(pipelineScan.stage)}
-                    </p>
-                  )}
-                  <PipelineGrid job={pipelineScan} />
-                </div>
-              )}
-
-              {activeScan.status === 'completed' && !activeScan.isBulkAggregate && (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/software-inventory?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-blue-400 hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-all group"
-                    title={`View ${activeScan.componentsFound} components in Software Inventory`}
-                  >
-                    <p className="text-gray-500 flex items-center justify-between">
-                      <span>Components</span>
-                      <ExternalLink className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-gray-900 dark:text-white">{activeScan.componentsFound}</p>
-                  </div>
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/vulnerabilities?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50/50 dark:bg-blue-950/30 px-3 py-2 cursor-pointer hover:border-blue-500 hover:bg-blue-100/50 dark:hover:bg-blue-900/40 transition-all group ring-1 ring-blue-500/20 shadow-2xs"
-                    title={`Click to view all ${activeScan.cvesFound} findings in Vulnerability Management for ${activeScan.targetProject}`}
-                  >
-                    <p className="text-blue-600 dark:text-blue-400 font-bold flex items-center justify-between">
-                      <span>Findings</span>
-                      <ExternalLink className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-blue-700 dark:text-blue-300">{activeScan.cvesFound}</p>
-                  </div>
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Critical' });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/vulnerabilities?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-red-400 hover:bg-red-50/30 dark:hover:bg-red-950/20 transition-all group"
-                    title={`Click to view critical findings in Vulnerability Management`}
-                  >
-                    <p className="text-gray-500 flex items-center justify-between">
-                      <span>Critical</span>
-                      <ExternalLink className="w-3 h-3 text-red-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-red-600">{activeScan.criticals || 0}</p>
-                  </div>
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'High' });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/vulnerabilities?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-orange-400 hover:bg-orange-50/30 dark:hover:bg-orange-950/20 transition-all group"
-                    title={`Click to view high findings in Vulnerability Management`}
-                  >
-                    <p className="text-gray-500 flex items-center justify-between">
-                      <span>High</span>
-                      <ExternalLink className="w-3 h-3 text-orange-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-orange-500">{activeScan.highs || 0}</p>
-                  </div>
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Medium' });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/vulnerabilities?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-amber-400 hover:bg-amber-50/30 dark:hover:bg-amber-950/20 transition-all group"
-                    title={`Click to view medium findings in Vulnerability Management`}
-                  >
-                    <p className="text-gray-500 flex items-center justify-between">
-                      <span>Medium</span>
-                      <ExternalLink className="w-3 h-3 text-amber-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-amber-500">{activeScan.mediums || 0}</p>
-                  </div>
-                  <div
-                    onClick={() => {
-                      const params = new URLSearchParams({ project: activeScan.targetProject, severity: 'Low' });
-                      if (activeScan.id) params.set('scan', activeScan.id);
-                      if (activeScan.appService) params.set('app', activeScan.appService);
-                      navigate(`/vulnerabilities?${params.toString()}`);
-                    }}
-                    className="rounded-lg border border-gray-200 dark:border-gray-800 px-3 py-2 cursor-pointer hover:border-sky-400 hover:bg-sky-50/30 dark:hover:bg-sky-950/20 transition-all group"
-                    title={`Click to view low findings in Vulnerability Management`}
-                  >
-                    <p className="text-gray-500 flex items-center justify-between">
-                      <span>Low</span>
-                      <ExternalLink className="w-3 h-3 text-sky-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </p>
-                    <p className="text-lg font-bold text-sky-500">{activeScan.lows || 0}</p>
-                  </div>
-                </div>
-              )}
-
-              <div className="bg-gray-950 rounded-xl p-4 text-xs font-mono text-gray-300 space-y-1.5 shadow-inner max-h-52 overflow-y-auto">
-                <div className="flex items-center justify-between text-gray-500 text-[11px] pb-2 border-b border-gray-800">
-                  <span className="flex items-center gap-1.5">
-                    <Terminal className="w-3.5 h-3.5 text-gray-400" />
-                    Scan stage log
-                  </span>
-                  <span>{pipelineScan?.events?.length ? `${pipelineScan.events.length} events` : 'Waiting for events'}</span>
-                </div>
-                {(pipelineScan?.events?.length ? pipelineScan.events : []).map((event) => (
-                  <p key={event.id} className="leading-relaxed">
-                    <span className="text-gray-600">[{formatEventTime(event.createdAt)}]</span> {event.stage}: {event.message}
-                  </p>
-                ))}
-                {!pipelineScan?.events?.length && (activeScan.logMessages || []).map((log, i) => (
-                  <p key={i} className="leading-relaxed">{log}</p>
-                ))}
-              </div>
-            </div>
-          ) : waitingScans.length > 0 ? null : (
-            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-12 text-center space-y-3 shadow-2xs">
-              <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 flex items-center justify-center mx-auto">
-                <Radio className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-gray-900 dark:text-white">
-                No scans currently executing
-              </h3>
-              <p className="text-xs text-gray-500 max-w-sm mx-auto">
-                All scheduled and manual jobs have completed. Launch a new scan from the New Scan tab.
-              </p>
-              <div className="flex items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={goToLaunchScan}
-                  className="px-4 py-2 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 text-xs font-semibold rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1.5"
-                  title="Back to Launch Scan"
-                >
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                  Back
-                </button>
-                <button
-                  onClick={goToLaunchScan}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer"
-                >
-                  + Launch New Scan
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+        <LiveScanMonitorTab
+          waitingScans={waitingScans}
+          activeScan={activeScan}
+          pipelineScan={pipelineScan}
+          bulkChildren={bulkChildren}
+          scanFailed={scanFailed}
+          now={now}
+          cancellingId={cancellingId}
+          rescanningId={rescanningId}
+          canCancel={canCancel}
+          canRescan={canRescan}
+          onGoToLaunchScan={goToLaunchScan}
+          onCancel={handleCancel}
+          onRescan={handleRescan}
+          onSelectScan={setSelectedScanId}
+        />
       )}
 
       {/* ========================================================================= */}
       {/* 3. SCAN HISTORY SUB-PAGE (Workspace UI Spec Section 12)                    */}
       {/* ========================================================================= */}
       {activeTab === 'history' && (
-        <div className="space-y-6">
-
-          <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={historySearch}
-                  onChange={(e) => setHistorySearch(e.target.value)}
-                  placeholder="Filter by Job ID or project..."
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-
-              <select
-                value={historyStatusFilter}
-                onChange={(e) => setHistoryStatusFilter(e.target.value)}
-                className="text-xs px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300"
-              >
-                <option value="All">All Statuses</option>
-                <option value="completed">Completed</option>
-                <option value="failed">Failed</option>
-                <option value="cancelled">Cancelled</option>
-                <option value="running">Running</option>
-                <option value="queued">Queued</option>
-              </select>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs min-w-[1100px]">
-                <thead>
-                  <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                    {/* UUID intentionally hidden from UI */}
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">PROJECT & TAG</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">SOURCE</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">STATUS</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">SUBMITTED</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">CREATED BY</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">COMPONENTS</th>
-                    <th className="py-3 px-3 font-semibold whitespace-nowrap">FINDINGS</th>
-                    <th className="py-3 pr-4 pl-3 font-semibold text-right whitespace-nowrap">ACTION</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {filteredHistory.map((job) => (
-                    <tr key={job.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40">
-                      {/* UUID intentionally hidden from UI */}
-                      <td className="py-3">
-                        <span className="font-bold text-gray-900 dark:text-white block">{job.targetProject}</span>
-                        <span className="text-[10px] text-gray-400 font-mono">{job.releaseTag || 'v1.0.0'}</span>
-                      </td>
-                      <td className="py-3 text-gray-600 dark:text-gray-400 max-w-[180px] truncate" title={job.source}>
-                        {job.source}
-                      </td>
-                      <td className="py-3">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${job.status === 'completed'
-                          ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                          : job.status === 'failed'
-                            ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300'
-                            : job.status === 'cancelled'
-                              ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
-                              : job.status === 'running' || job.status === 'analyzing'
-                                ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
-                                : 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                          }`}>
-                          {job.status}
-                        </span>
-                      </td>
-                      <td className="py-3 text-gray-500 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap">{formatScanTimestamp12h(job.timestamp)}</td>
-                      <td className="py-3 text-gray-700 dark:text-gray-300 font-medium">
-                        {(job as any).requestedBy || (job as any).createdBy || 'Asha Mehta'}
-                      </td>
-                      <td className="py-3 font-semibold text-gray-900 dark:text-white">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const params = new URLSearchParams();
-                            params.set('project', job.targetProject);
-                            if (job.id) params.set('scan', job.id);
-                            if (job.appService) params.set('app', job.appService);
-                            navigate(`/software-inventory?${params.toString()}`);
-                          }}
-                          className="hover:underline hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer text-left"
-                          title={`View components for ${job.targetProject}${job.appService ? ` (${job.appService})` : ''} in Software Inventory`}
-                        >
-                          {job.componentsFound}
-                        </button>
-                      </td>
-                      <td className="py-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const params = new URLSearchParams();
-                            params.set('project', job.targetProject);
-                            if (job.id) params.set('scan', job.id);
-                            if (job.appService) params.set('app', job.appService);
-                            navigate(`/vulnerabilities?${params.toString()}`);
-                          }}
-                          className="text-left hover:underline cursor-pointer group flex items-center gap-1.5"
-                          title={`View findings for ${job.targetProject}${job.appService ? ` (${job.appService})` : ''} in Vulnerability Management`}
-                        >
-                          <span>
-                            <span className="text-red-600 dark:text-red-400 font-semibold">{job.criticals || 0} Crit</span> •{' '}
-                            <span className="text-orange-500 dark:text-orange-400 font-semibold">{job.highs || 0} High</span> •{' '}
-                            <span className="text-amber-500 dark:text-amber-400 font-semibold">{job.mediums || 0} Med</span> •{' '}
-                            <span className="text-sky-500 dark:text-sky-400 font-semibold">{job.lows || 0} Low</span>
-                          </span>
-                          <ExternalLink className="w-3 h-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
-                        </button>
-                      </td>
-                      <td className="py-3 text-right">
-                        <div className="inline-flex items-center justify-end">
-                          <ScanActionMenu
-                            scan={job}
-                            onViewDetails={(scan) => setSelectedScanId(scan.id)}
-                            onExport={(format, scanId) => exportSBOM(format, scanId)}
-                            onRescan={handleRescan}
-                            onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
-                            rescanning={rescanningId === job.id}
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <ScanHistoryTab
+          historySearch={historySearch}
+          onHistorySearchChange={setHistorySearch}
+          historyStatusFilter={historyStatusFilter}
+          onHistoryStatusFilterChange={setHistoryStatusFilter}
+          filteredHistory={filteredHistory}
+          rescanningId={rescanningId}
+          onSelectScan={setSelectedScanId}
+          onExport={exportSBOM}
+          onRescan={handleRescan}
+          onToggleLifecycle={(scan, newStatus) => updateApplicationLifecycle(scan.targetProject, newStatus)}
+        />
       )}
 
       {/* ========================================================================= */}
       {/* 4. SCHEDULED SCANS SUB-PAGE (Workspace UI Spec Section 13)                */}
       {/* ========================================================================= */}
       {activeTab === 'schedules' && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-end">
-            <button
-              type="button"
-              onClick={() => setCreateScheduleModalOpen(true)}
-              className="px-3.5 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-2xs inline-flex items-center gap-2 cursor-pointer transition-colors shrink-0"
-            >
-              <PlusCircle className="w-4 h-4" />
-              <span>Create Schedule</span>
-            </button>
-          </div>
-
-          {schedulesList.length === 0 ? (
-            <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-2xl p-12 text-center">
-              <div className="flex flex-col items-center justify-center max-w-md mx-auto space-y-3">
-                <div className="w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-950/50 flex items-center justify-center text-blue-500 border border-blue-200 dark:border-blue-800">
-                  <Calendar className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900 dark:text-white">No Scheduled Scans Yet</h3>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Static placeholder data has been removed. Configure your first real recurring scan schedule below to automate security audits.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCreateScheduleModalOpen(true)}
-                  className="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm inline-flex items-center gap-2 cursor-pointer transition-colors mt-2"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  <span>Create Scan Schedule</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {schedulesList.map((sched) => (
-                <div
-                  key={sched.id}
-                  className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs flex flex-col justify-between space-y-4"
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="w-8 h-8 rounded-lg bg-orange-50 dark:bg-orange-950/60 text-orange-600 flex items-center justify-center shrink-0">
-                        <Calendar className="w-4 h-4" />
-                      </div>
-                      <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sched.enabled}
-                          onChange={() => toggleSchedule(sched.id)}
-                          className="rounded text-blue-600 focus:ring-blue-500"
-                        />
-                        <span>{sched.enabled ? 'Enabled' : 'Disabled'}</span>
-                      </label>
-                    </div>
-
-                    <h3 className="text-sm font-bold text-gray-900 dark:text-white mt-3">
-                      {sched.name}
-                    </h3>
-                    <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 mt-0.5">
-                      {sched.project}
-                    </p>
-
-                    <div className="mt-3 space-y-1.5 text-xs text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/40 p-2.5 rounded-lg border border-gray-100 dark:border-gray-700/60">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Cadence:</span>
-                        <span className="font-semibold text-gray-800 dark:text-gray-200">{sched.frequency}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Next Run:</span>
-                        <span className="text-emerald-600 font-semibold">{sched.nextRun}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Last Run:</span>
-                        <span>{sched.lastRun}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-3 border-t border-gray-100 dark:border-gray-800 text-xs">
-                    <button
-                      onClick={() => {
-                        addToast({
-                          type: 'info',
-                          title: 'Schedule Dispatched',
-                          message: `Triggered immediate run of "${sched.name}".`,
-                        });
-                        setTab('live');
-                      }}
-                      className="font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      Run Now
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setSchedulesList((prev) => prev.filter((s) => s.id !== sched.id));
-                        addToast({ type: 'info', title: 'Schedule Deleted', message: `Removed schedule.` });
-                      }}
-                      className="text-gray-400 hover:text-red-600 cursor-pointer p-1"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <ScanSchedulesTab
+          schedulesList={schedulesList}
+          onToggleSchedule={toggleSchedule}
+          onRunNow={(sched) => {
+            addToast({
+              type: 'info',
+              title: 'Schedule Dispatched',
+              message: `Triggered immediate run of "${sched.name}".`,
+            });
+            setTab('live');
+          }}
+          onDeleteSchedule={(id) => {
+            setSchedulesList((prev) => prev.filter((s) => s.id !== id));
+            addToast({ type: 'info', title: 'Schedule Deleted', message: `Removed schedule.` });
+          }}
+          onOpenCreateModal={() => setCreateScheduleModalOpen(true)}
+        />
       )}
 
       {selectedHistoryScan && (
@@ -3092,198 +2296,23 @@ export const SecurityScans: React.FC = () => {
         />
       )}
 
-      {/* Create Schedule Modal */}
-      {createScheduleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn backdrop-blur-xs">
-          <div className="bg-white dark:bg-[#111827] rounded-xl max-w-lg w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-gray-100 dark:border-gray-800">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center">
-                  <Calendar className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-gray-900 dark:text-white">Create Scan Schedule</h3>
-                  <p className="text-[11px] text-gray-500 dark:text-gray-400">Configure recurring automated SBOM security audits</p>
-                </div>
-              </div>
-              <button onClick={() => setCreateScheduleModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-lg">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateSchedule} className="space-y-3.5 text-xs">
-              <div>
-                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Schedule Name</label>
-                <input
-                  type="text"
-                  required
-                  value={newSchedName}
-                  onChange={(e) => setNewSchedName(e.target.value)}
-                  placeholder="e.g. Nightly Core Scan"
-                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Target Project</label>
-                <select
-                  value={newSchedProject}
-                  onChange={(e) => setNewSchedProject(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                >
-                  <option value="Payments API">Payments API</option>
-                  <option value="Customer Portal">Customer Portal</option>
-                  <option value="Checkout Service">Checkout Service</option>
-                  <option value="Mobile App Backend">Mobile App Backend</option>
-                  <option value="Admin Portal">Admin Portal</option>
-                </select>
-              </div>
-
-              {/* Calendar Date and Time Picker Section */}
-              <div className="p-3.5 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-1.5 text-xs">
-                    <Calendar className="w-3.5 h-3.5 text-blue-500" />
-                    Select Date & Time (Calendar)
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
-                      Execution Date
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={newSchedDate}
-                      onChange={(e) => setNewSchedDate(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-600 dark:text-gray-400 mb-1">
-                      Execution Time
-                    </label>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <input
-                        type="time"
-                        required
-                        value={newSchedTime}
-                        onChange={(e) => setNewSchedTime(e.target.value)}
-                        className="w-full px-2.5 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer font-mono"
-                      />
-                      <select
-                        value={newSchedTimezone}
-                        onChange={(e) => setNewSchedTimezone(e.target.value)}
-                        className="w-full px-2 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-medium text-xs focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
-                      >
-                        <option value="UTC">UTC</option>
-                        <option value="EST">EST</option>
-                        <option value="PST">PST</option>
-                        <option value="IST">IST</option>
-                        <option value="CET">CET</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick Date Presets */}
-                <div className="flex items-center gap-1.5 pt-0.5 flex-wrap">
-                  <span className="text-[10px] text-gray-400 font-bold uppercase">Quick Dates:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const today = new Date().toISOString().split('T')[0];
-                      setNewSchedDate(today);
-                    }}
-                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
-                  >
-                    Today
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const tom = new Date();
-                      tom.setDate(tom.getDate() + 1);
-                      setNewSchedDate(tom.toISOString().split('T')[0]);
-                    }}
-                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
-                  >
-                    Tomorrow
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const nextWk = new Date();
-                      nextWk.setDate(nextWk.getDate() + 7);
-                      setNewSchedDate(nextWk.toISOString().split('T')[0]);
-                    }}
-                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
-                  >
-                    +7 Days
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const firstNextMo = new Date();
-                      firstNextMo.setMonth(firstNextMo.getMonth() + 1, 1);
-                      setNewSchedDate(firstNextMo.toISOString().split('T')[0]);
-                    }}
-                    className="px-2 py-0.5 rounded text-[10px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-blue-400 text-gray-600 dark:text-gray-300 transition-colors cursor-pointer shadow-2xs"
-                  >
-                    1st of Next Month
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-semibold text-gray-700 dark:text-gray-300 mb-1">Recurrence Frequency</label>
-                <select
-                  value={newSchedFreq}
-                  onChange={(e) => setNewSchedFreq(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer"
-                >
-                  <option value="Daily">Daily</option>
-                  <option value="Weekly on Sunday">Weekly on Sunday</option>
-                  <option value="Weekly on Monday">Weekly on Monday</option>
-                  <option value="Monthly (1st of month)">Monthly (1st of month)</option>
-                  <option value="One-time Run">One-time Run (No recurrence)</option>
-                </select>
-              </div>
-
-              {/* Summary Banner */}
-              <div className="p-2.5 bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/60 dark:border-blue-900/40 rounded-lg flex items-center justify-between text-[11px]">
-                <div className="flex items-center gap-1.5 text-blue-800 dark:text-blue-300">
-                  <Clock className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                  <span>Next scheduled run:</span>
-                </div>
-                <span className="font-bold text-blue-900 dark:text-blue-200 font-mono">
-                  {newSchedDate || 'Selected Date'} @ {newSchedTime} {newSchedTimezone}
-                </span>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3 border-t border-gray-100 dark:border-gray-800">
-                <button
-                  type="button"
-                  onClick={() => setCreateScheduleModalOpen(false)}
-                  className="px-3.5 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-sm transition-colors cursor-pointer flex items-center gap-1.5"
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Create Schedule</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <CreateScheduleModal
+        isOpen={createScheduleModalOpen}
+        onClose={() => setCreateScheduleModalOpen(false)}
+        onSubmit={handleCreateSchedule}
+        newSchedName={newSchedName}
+        onNewSchedNameChange={setNewSchedName}
+        newSchedProject={newSchedProject}
+        onNewSchedProjectChange={setNewSchedProject}
+        newSchedDate={newSchedDate}
+        onNewSchedDateChange={setNewSchedDate}
+        newSchedTime={newSchedTime}
+        onNewSchedTimeChange={setNewSchedTime}
+        newSchedTimezone={newSchedTimezone}
+        onNewSchedTimezoneChange={setNewSchedTimezone}
+        newSchedFreq={newSchedFreq}
+        onNewSchedFreqChange={setNewSchedFreq}
+      />
 
       {/* Local Source Upload Tabbed Modal (Matches User Reference Image) */}
       {localUploadModalOpen && (

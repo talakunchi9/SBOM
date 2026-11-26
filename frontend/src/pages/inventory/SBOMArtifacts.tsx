@@ -512,7 +512,7 @@ export const SBOMArtifacts: React.FC = () => {
               <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
                 <th className="pb-3 pr-4 font-semibold whitespace-nowrap">FILE</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">FORMAT</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">PROJECT</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">APPLICATIONS</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">COMPONENTS</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">SIGNED</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">UPLOADED</th>
@@ -531,8 +531,8 @@ export const SBOMArtifacts: React.FC = () => {
                   <tr
                     key={art.id}
                     className={`transition-colors ${art.isFailingRow
-                        ? 'bg-red-50/40 dark:bg-red-950/20 hover:bg-red-50/70'
-                        : 'hover:bg-gray-50/70 dark:hover:bg-gray-800/40'
+                      ? 'bg-red-50/40 dark:bg-red-950/20 hover:bg-red-50/70'
+                      : 'hover:bg-gray-50/70 dark:hover:bg-gray-800/40'
                       }`}
                   >
                     {/* File column with file icon + name + size */}
@@ -662,11 +662,10 @@ export const SBOMArtifacts: React.FC = () => {
                 ].map((fmt) => (
                   <label
                     key={fmt.id}
-                    className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
-                      chosenDownloadFormat === fmt.id
-                        ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-blue-500/30'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                    }`}
+                    className={`flex items-start gap-3 p-3 rounded-xl border transition-all cursor-pointer ${chosenDownloadFormat === fmt.id
+                      ? 'border-blue-600 bg-blue-50/40 dark:bg-blue-950/40 ring-1 ring-blue-500/30'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                      }`}
                   >
                     <input
                       type="radio"
@@ -874,10 +873,10 @@ export const SBOMArtifacts: React.FC = () => {
                   }}
                   onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-all ${isDragging
-                      ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
-                      : uploadFile
-                        ? 'border-emerald-400 bg-emerald-50/30 dark:bg-emerald-950/20'
-                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 bg-gray-50/50 dark:bg-gray-800/40'
+                    ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/20'
+                    : uploadFile
+                      ? 'border-emerald-400 bg-emerald-50/30 dark:bg-emerald-950/20'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-600 bg-gray-50/50 dark:bg-gray-800/40'
                     }`}
                 >
                   {uploadFile ? (

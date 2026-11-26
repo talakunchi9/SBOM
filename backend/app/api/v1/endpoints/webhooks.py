@@ -89,3 +89,4 @@ async def webhook(request: Request):
     except Exception as exc:
         return error_response("SCAN_CREATE_FAILED", str(exc), rid, 500)
     return envelope({"status": "queued", "scan_id": scan["id"]}, rid)
+
