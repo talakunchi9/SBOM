@@ -30,6 +30,7 @@ secrets/
 *.db-wal
 *.db-shm
 backend/data/
+data/
 
 # OS generated files
 .DS_Store
