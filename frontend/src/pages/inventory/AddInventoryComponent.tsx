@@ -62,59 +62,63 @@ export const AddInventoryComponent: React.FC = () => {
     const trimmedProject = (selectedProject?.name || projectName || '').trim();
     const trimmedApp = (selectedApplication?.name || projectApplication || '').trim();
     const trimmedComp = componentName.trim();
-    const trimmedPkg = packageName.trim() || trimmedComp;
+    const trimmedPkg = packageName.trim();
     const trimmedVer = version.trim();
-    const trimmedFile = fileName.trim() || 'package.json';
-    const trimmedCreatedBy = createdBy.trim() || 'Asha Mehta';
+    const trimmedFile = fileName.trim();
+    const trimmedPurl = purl.trim();
+    const trimmedCreatedBy = createdBy.trim();
+    const trimmedReason = reason.trim();
 
     if (!trimmedProject) {
-      addToast({
-        type: 'warning',
-        title: 'Validation Error',
-        message: 'Application Name is required.',
-      });
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Application Name is required.' });
       return;
     }
-
     if (!trimmedApp) {
-      addToast({
-        type: 'warning',
-        title: 'Validation Error',
-        message: 'Module / Service is required.',
-      });
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Module / Service is required.' });
       return;
     }
-
     if (!trimmedComp) {
-      addToast({
-        type: 'warning',
-        title: 'Validation Error',
-        message: 'Component Name is required.',
-      });
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Component Name is required.' });
       return;
     }
-
+    if (!trimmedPkg) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Package Name is required.' });
+      return;
+    }
     if (!trimmedVer) {
-      addToast({
-        type: 'warning',
-        title: 'Validation Error',
-        message: 'Version is required.',
-      });
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Version is required.' });
+      return;
+    }
+    if (!trimmedFile) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'File Name is required.' });
+      return;
+    }
+    if (!trimmedReason) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Reason for addition is required for audit trail.' });
+      return;
+    }
+    if (!license) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'License is required.' });
+      return;
+    }
+    if (!ecosystem) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Ecosystem is required.' });
+      return;
+    }
+    if (!riskLevel) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Risk Level is required.' });
+      return;
+    }
+    if (!trimmedPurl) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'P-URL (Package URL) is required.' });
+      return;
+    }
+    if (!trimmedCreatedBy) {
+      addToast({ type: 'warning', title: 'Validation Error', message: 'Created By is required.' });
       return;
     }
 
-    if (!reason.trim()) {
-      addToast({
-        type: 'warning',
-        title: 'Validation Error',
-        message: 'Reason for addition is required for audit trail.',
-      });
-      return;
-    }
-
-    const finalPurl =
-      purl.trim() ||
-      `pkg:${ecosystem.toLowerCase()}/${trimmedPkg}@${trimmedVer}`;
+    const finalPurl = trimmedPurl;
 
     setSaving(true);
     try {
@@ -318,9 +322,10 @@ export const AddInventoryComponent: React.FC = () => {
               {/* License */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
-                  License
+                  License <span className="text-red-500">*</span>
                 </label>
                 <select
+                  required
                   value={license}
                   onChange={(e) => setLicense(e.target.value as LicenseType)}
                   className="w-full px-2.5 py-1.5 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs cursor-pointer"
@@ -340,9 +345,10 @@ export const AddInventoryComponent: React.FC = () => {
               {/* Ecosystem */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
-                  Ecosystem
+                  Ecosystem <span className="text-red-500">*</span>
                 </label>
                 <select
+                  required
                   value={ecosystem}
                   onChange={(e) => setEcosystem(e.target.value as Ecosystem)}
                   className="w-full px-2.5 py-1.5 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs cursor-pointer"
@@ -361,9 +367,10 @@ export const AddInventoryComponent: React.FC = () => {
               {/* Risk Level */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
-                  Risk Level
+                  Risk Level <span className="text-red-500">*</span>
                 </label>
                 <select
+                  required
                   value={riskLevel}
                   onChange={(e) => setRiskLevel(e.target.value as Severity | 'Safe')}
                   className="w-full px-2.5 py-1.5 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs cursor-pointer"
@@ -382,10 +389,11 @@ export const AddInventoryComponent: React.FC = () => {
               {/* P-URL (Package URL) */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
-                  P-URL (Package URL)
+                  P-URL (Package URL) <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
+                  required
                   value={purl}
                   onChange={(e) => {
                     setPurl(e.target.value);
@@ -399,10 +407,11 @@ export const AddInventoryComponent: React.FC = () => {
               {/* Created By (Styled the same way as Package URL) */}
               <div>
                 <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
-                  Created By
+                  Created By <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
+                  required
                   value={createdBy}
                   onChange={(e) => setCreatedBy(e.target.value)}
                   placeholder="e.g. Asha Mehta"
