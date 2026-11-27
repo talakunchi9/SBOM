@@ -331,6 +331,18 @@ export const ScanResultDetails: React.FC<ScanResultDetailsProps> = ({
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
                 {job.scanType}
               </span>
+              {(!job.isBulkAggregate || (job.releaseTag && !job.releaseTag.includes('rows'))) && (
+                <span
+                  className="px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/60"
+                  title="Application Version"
+                >
+                  {(() => {
+                    const v = (job.releaseTag || '').trim();
+                    if (!v) return 'v1.0.0';
+                    return v.toLowerCase().startsWith('v') ? v : `v${v}`;
+                  })()}
+                </span>
+              )}
             </div>
             {/* <p className="text-xs text-gray-500 mt-1">
               {job.isBulkAggregate
