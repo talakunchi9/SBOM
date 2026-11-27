@@ -37,21 +37,33 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
     top?: number;
     bottom?: number;
     right: number;
+    maxHeight: number;
   } | null>(null);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const lifecycleLower = (scan.lifecycleStatus || 'Active').trim().toLowerCase();
+  const isDecommissioned = lifecycleLower === 'decommissioned' || lifecycleLower === 'inactive';
+
   const updatePosition = () => {
     if (!buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const openUpwards = spaceBelow < 340 && rect.top > 340;
+    const padding = 12;
+    const gap = 6;
+    const menuWidth = 256; // w-64
+    const spaceBelow = window.innerHeight - rect.bottom - padding;
+    const spaceAbove = rect.top - padding;
+    const openUpwards = spaceBelow < 360 && spaceAbove > spaceBelow;
+
+    const rawRight = Math.max(padding, window.innerWidth - rect.right);
+    const maxRight = Math.max(padding, window.innerWidth - menuWidth - padding);
 
     setMenuCoords({
-      top: openUpwards ? undefined : rect.bottom + 6,
-      bottom: openUpwards ? window.innerHeight - rect.top + 6 : undefined,
-      right: Math.max(12, window.innerWidth - rect.right),
+      top: openUpwards ? undefined : rect.bottom + gap,
+      bottom: openUpwards ? window.innerHeight - rect.top + gap : undefined,
+      right: Math.min(rawRight, maxRight),
+      maxHeight: Math.max(180, (openUpwards ? spaceAbove : spaceBelow) - gap),
     });
   };
 
@@ -162,8 +174,9 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
               top: menuCoords.top !== undefined ? `${menuCoords.top}px` : undefined,
               bottom: menuCoords.bottom !== undefined ? `${menuCoords.bottom}px` : undefined,
               right: `${menuCoords.right}px`,
+              maxHeight: `${menuCoords.maxHeight}px`,
             }}
-            className="z-50 w-64 bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-700/80 rounded-xl shadow-2xl p-1.5 animate-fadeIn backdrop-blur-md text-left select-none"
+            className="z-[9999] w-64 max-w-[calc(100vw-24px)] overflow-y-auto bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-700/80 rounded-xl shadow-2xl p-1.5 animate-fadeIn backdrop-blur-md text-left select-none"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header info */}
@@ -302,8 +315,8 @@ export const ScanActionMenu: React.FC<ScanActionMenuProps> = ({
               )}
             </div>
 
-            {/* Option 3: Rescan */}
-            {onRescan && (
+            {/* Option 3: Rescan (hidden when decommissioned) */}
+            {onRescan && !isDecommissioned && (
               <div className="mt-1 pt-1 border-t border-gray-100 dark:border-gray-800/80">
                 <button
                   type="button"
