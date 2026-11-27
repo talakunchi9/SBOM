@@ -109,7 +109,7 @@ def test_inventory_component_is_saved_and_listed():
             ("checkout-api",),
         ).fetchone()[0]
         services = conn.execute(
-            "SELECT COUNT(*) FROM applications WHERE name = %s",
+            "SELECT COUNT(*) FROM modules WHERE name = %s",
             ("payments-service",),
         ).fetchone()[0]
         components = conn.execute(

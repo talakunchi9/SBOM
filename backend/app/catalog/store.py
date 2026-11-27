@@ -1,4 +1,4 @@
-"""Tenant-scoped catalog of projects and their applications/services."""
+"""Tenant-scoped catalog of applications and their modules/services."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ def ensure_security_scans(db, organization_id: str) -> str:
 
 
 def ensure_software_inventory(db, organization_id: str) -> str:
-    """Ensure the organization exists. Inventory components belong to an application."""
+    """Ensure the organization exists. Inventory components belong to an application/module."""
     return ensure_organization(db, organization_id)
 
 
@@ -57,7 +57,15 @@ class CatalogRepo:
     def __init__(self, db) -> None:
         self.db = db
 
-    def list_projects(self, organization_id: str, *, q: str = "", limit: int = _DEFAULT_LIMIT, cursor: str | None = None) -> dict[str, Any]:
+    def list_projects(
+        self,
+        organization_id: str,
+        *,
+        q: str = "",
+        limit: int = _DEFAULT_LIMIT,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List registered applications (historically named projects in API)."""
         page_size = _page_limit(limit)
         query = (q or "").strip()[:_MAX_NAME]
         params: list[Any] = [organization_id]
@@ -71,13 +79,28 @@ class CatalogRepo:
             params.extend([name, record_id])
         params.append(page_size + 1)
         rows = self.db.execute(
-            f"""SELECT id, name FROM projects
+            f"""SELECT id, name, readable_id, business_owner, technical_owner, 
+                       development_type, vendor_name, lifecycle_status 
+               FROM applications
                WHERE {filters}
                ORDER BY name ASC, id ASC
                LIMIT ?""",
             params,
         ).fetchall()
-        return _page(rows, page_size, lambda row: {"id": row["id"], "name": row["name"]})
+        return _page(
+            rows,
+            page_size,
+            lambda row: {
+                "id": row["id"],
+                "name": row["name"],
+                "readable_id": row["readable_id"] if "readable_id" in row.keys() else "",
+                "business_owner": row["business_owner"] if "business_owner" in row.keys() else "",
+                "technical_owner": row["technical_owner"] if "technical_owner" in row.keys() else "",
+                "development_type": row["development_type"] if "development_type" in row.keys() else "In-house",
+                "vendor_name": row["vendor_name"] if "vendor_name" in row.keys() else "",
+                "lifecycle_status": row["lifecycle_status"] if "lifecycle_status" in row.keys() else "Active",
+            },
+        )
 
     def list_applications(
         self,
@@ -88,13 +111,14 @@ class CatalogRepo:
         limit: int = _DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> dict[str, Any]:
+        """List modules belonging to an application (historically named applications in API)."""
         project = self.get_project(organization_id, project_id)
         if project is None:
             raise CatalogError("PROJECT_NOT_FOUND", "the requested project does not exist", 404)
         page_size = _page_limit(limit)
         query = (q or "").strip()[:_MAX_NAME]
         params: list[Any] = [organization_id, project["id"]]
-        filters = "organization_id = ? AND project_id = ?"
+        filters = "organization_id = ? AND application_id = ?"
         if query:
             filters += " AND name ILIKE ? ESCAPE '#'"
             params.append(_ilike_contains(query))
@@ -104,7 +128,8 @@ class CatalogRepo:
             params.extend([name, record_id])
         params.append(page_size + 1)
         rows = self.db.execute(
-            f"""SELECT id, name, project_id FROM applications
+            f"""SELECT id, name, application_id, path, module_type, programming_language, package_manager 
+               FROM modules
                WHERE {filters}
                ORDER BY name ASC, id ASC
                LIMIT ?""",
@@ -113,7 +138,16 @@ class CatalogRepo:
         return _page(
             rows,
             page_size,
-            lambda row: {"id": row["id"], "name": row["name"], "project_id": row["project_id"]},
+            lambda row: {
+                "id": row["id"],
+                "name": row["name"],
+                "project_id": row["application_id"],
+                "application_id": row["application_id"],
+                "path": row["path"] if "path" in row.keys() else "/",
+                "module_type": row["module_type"] if "module_type" in row.keys() else "Microservice",
+                "programming_language": row["programming_language"] if "programming_language" in row.keys() else "",
+                "package_manager": row["package_manager"] if "package_manager" in row.keys() else "",
+            },
         )
 
     def get_project(self, organization_id: str, project_id: str) -> dict[str, Any] | None:
@@ -121,77 +155,173 @@ class CatalogRepo:
         if not record_id:
             return None
         row = self.db.execute(
-            "SELECT id, name FROM projects WHERE organization_id = ? AND id = ?",
+            """SELECT id, name, readable_id, business_owner, technical_owner, 
+                      development_type, vendor_name, lifecycle_status 
+               FROM applications 
+               WHERE organization_id = ? AND id = ?""",
             (organization_id, record_id),
         ).fetchone()
-        return {"id": row["id"], "name": row["name"]} if row else None
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "readable_id": row["readable_id"] if "readable_id" in row.keys() else "",
+            "business_owner": row["business_owner"] if "business_owner" in row.keys() else "",
+            "technical_owner": row["technical_owner"] if "technical_owner" in row.keys() else "",
+            "development_type": row["development_type"] if "development_type" in row.keys() else "In-house",
+            "vendor_name": row["vendor_name"] if "vendor_name" in row.keys() else "",
+            "lifecycle_status": row["lifecycle_status"] if "lifecycle_status" in row.keys() else "Active",
+        }
 
     def get_application(self, organization_id: str, application_id: str) -> dict[str, Any] | None:
         record_id = (application_id or "").strip()
         if not record_id:
             return None
         row = self.db.execute(
-            """SELECT id, name, project_id FROM applications
+            """SELECT id, name, application_id, path, module_type, programming_language, package_manager 
+               FROM modules
                WHERE organization_id = ? AND id = ?""",
             (organization_id, record_id),
         ).fetchone()
-        return {"id": row["id"], "name": row["name"], "project_id": row["project_id"]} if row else None
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "project_id": row["application_id"],
+            "application_id": row["application_id"],
+            "path": row["path"] if "path" in row.keys() else "/",
+            "module_type": row["module_type"] if "module_type" in row.keys() else "Microservice",
+            "programming_language": row["programming_language"] if "programming_language" in row.keys() else "",
+            "package_manager": row["package_manager"] if "package_manager" in row.keys() else "",
+        }
 
     def find_project_by_name(self, organization_id: str, name: str) -> dict[str, Any] | None:
         label = (name or "").strip()
         if not label:
             return None
         row = self.db.execute(
-            "SELECT id, name FROM projects WHERE organization_id = ? AND name = ?",
+            """SELECT id, name, readable_id, business_owner, technical_owner, 
+                      development_type, vendor_name, lifecycle_status 
+               FROM applications 
+               WHERE organization_id = ? AND name = ?""",
             (organization_id, label),
         ).fetchone()
-        return {"id": row["id"], "name": row["name"]} if row else None
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "readable_id": row["readable_id"] if "readable_id" in row.keys() else "",
+            "business_owner": row["business_owner"] if "business_owner" in row.keys() else "",
+            "technical_owner": row["technical_owner"] if "technical_owner" in row.keys() else "",
+            "development_type": row["development_type"] if "development_type" in row.keys() else "In-house",
+            "vendor_name": row["vendor_name"] if "vendor_name" in row.keys() else "",
+            "lifecycle_status": row["lifecycle_status"] if "lifecycle_status" in row.keys() else "Active",
+        }
 
     def find_application(self, organization_id: str, project_id: str, name: str) -> dict[str, Any] | None:
         label = (name or "").strip()
         if not project_id or not label:
             return None
         row = self.db.execute(
-            """SELECT id, name, project_id FROM applications
-               WHERE organization_id = ? AND project_id = ? AND name = ?""",
+            """SELECT id, name, application_id, path, module_type, programming_language, package_manager 
+               FROM modules
+               WHERE organization_id = ? AND application_id = ? AND name = ?""",
             (organization_id, project_id, label),
         ).fetchone()
-        return {"id": row["id"], "name": row["name"], "project_id": row["project_id"]} if row else None
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "project_id": row["application_id"],
+            "application_id": row["application_id"],
+            "path": row["path"] if "path" in row.keys() else "/",
+            "module_type": row["module_type"] if "module_type" in row.keys() else "Microservice",
+            "programming_language": row["programming_language"] if "programming_language" in row.keys() else "",
+            "package_manager": row["package_manager"] if "package_manager" in row.keys() else "",
+        }
 
-    def ensure_project(self, organization_id: str, name: str) -> dict[str, Any]:
-        label = _require_name(name, "project name")
+    def ensure_project(
+        self,
+        organization_id: str,
+        name: str,
+        business_owner: str = "",
+        technical_owner: str = "",
+        development_type: str = "In-house",
+        vendor_name: str = "",
+        lifecycle_status: str = "Active",
+    ) -> dict[str, Any]:
+        label = _require_name(name, "project/application name")
         existing = self.find_project_by_name(organization_id, label)
         if existing:
             return existing
         ensure_organization(self.db, organization_id)
         self.db.execute(
-            """INSERT INTO projects (id, organization_id, name)
-               VALUES (?,?,?) ON CONFLICT (organization_id, name) DO NOTHING""",
-            (str(uuid.uuid4()), organization_id, label),
+            """INSERT INTO applications (
+                 id, organization_id, name, business_owner, technical_owner,
+                 development_type, vendor_name, lifecycle_status
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (organization_id, name) DO NOTHING""",
+            (
+                str(uuid.uuid4()),
+                organization_id,
+                label,
+                business_owner,
+                technical_owner,
+                development_type,
+                vendor_name,
+                lifecycle_status,
+            ),
         )
         finish(self.db)
         found = self.find_project_by_name(organization_id, label)
         if found is None:
-            raise CatalogError("CREATE_FAILED", "project could not be saved", 500)
+            raise CatalogError("CREATE_FAILED", "application could not be saved", 500)
         return found
 
-    def ensure_application(self, organization_id: str, project_id: str, name: str) -> dict[str, Any]:
-        label = _require_name(name, "application/service name")
+    def ensure_application(
+        self,
+        organization_id: str,
+        project_id: str,
+        name: str,
+        path: str = "/",
+        module_type: str = "Microservice",
+        programming_language: str = "",
+        package_manager: str = "",
+    ) -> dict[str, Any]:
+        label = _require_name(name, "module/service name")
         project = self.get_project(organization_id, project_id)
         if project is None:
-            raise CatalogError("PROJECT_NOT_FOUND", "the requested project does not exist", 404)
+            raise CatalogError("PROJECT_NOT_FOUND", "the requested project/application does not exist", 404)
         existing = self.find_application(organization_id, project["id"], label)
         if existing:
             return existing
         self.db.execute(
-            """INSERT INTO applications (id, project_id, organization_id, name)
-               VALUES (?,?,?,?) ON CONFLICT (organization_id, project_id, name) DO NOTHING""",
-            (str(uuid.uuid4()), project["id"], organization_id, label),
+            """INSERT INTO modules (
+                 id, application_id, organization_id, name, path,
+                 module_type, programming_language, package_manager
+               )
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (organization_id, application_id, name) DO NOTHING""",
+            (
+                str(uuid.uuid4()),
+                project["id"],
+                organization_id,
+                label,
+                path,
+                module_type,
+                programming_language,
+                package_manager,
+            ),
         )
         finish(self.db)
         found = self.find_application(organization_id, project["id"], label)
         if found is None:
-            raise CatalogError("CREATE_FAILED", "application/service could not be saved", 500)
+            raise CatalogError("CREATE_FAILED", "module could not be saved", 500)
         return found
 
     def create_project(self, organization_id: str, name: str, applications: list[str] | None = None) -> dict[str, Any]:
@@ -199,7 +329,10 @@ class CatalogRepo:
         app_names = []
         seen = set()
         for raw in applications or []:
-            label = (raw or "").strip()[:_MAX_NAME]
+            if isinstance(raw, dict):
+                label = (raw.get("name") or "").strip()[:_MAX_NAME]
+            else:
+                label = (str(raw) or "").strip()[:_MAX_NAME]
             if not label or label.lower() in seen:
                 continue
             seen.add(label.lower())
@@ -208,12 +341,35 @@ class CatalogRepo:
         return {
             "id": project["id"],
             "name": project["name"],
+            "readable_id": project.get("readable_id", ""),
             "applications": items,
         }
 
-    def ensure_named(self, organization_id: str, project_name: str, application_name: str) -> BoundTarget:
-        project = self.ensure_project(organization_id, project_name)
-        application = self.ensure_application(organization_id, project["id"], application_name)
+    def ensure_named(
+        self,
+        organization_id: str,
+        project_name: str,
+        application_name: str,
+        business_owner: str = "",
+        technical_owner: str = "",
+        development_type: str = "In-house",
+        vendor_name: str = "",
+        module_type: str = "Microservice",
+    ) -> BoundTarget:
+        project = self.ensure_project(
+            organization_id,
+            project_name,
+            business_owner=business_owner,
+            technical_owner=technical_owner,
+            development_type=development_type,
+            vendor_name=vendor_name,
+        )
+        application = self.ensure_application(
+            organization_id,
+            project["id"],
+            application_name,
+            module_type=module_type,
+        )
         return BoundTarget(project["id"], project["name"], application["id"], application["name"])
 
     def bind(
@@ -233,7 +389,7 @@ class CatalogRepo:
         application_name = (application_name or "").strip()[:_MAX_NAME]
         if not project_id and not application_id and persist_missing and project_name and application_name:
             return self.ensure_named(organization_id, project_name, application_name)
-        if project_id or application_id:
+        if project_id and application_id:
             persist_missing = False
 
         project = self.get_project(organization_id, project_id) if project_id else None
@@ -255,7 +411,7 @@ class CatalogRepo:
             project = self.get_project(organization_id, application["project_id"])
         if application is None and application_name and project:
             application = self.find_application(organization_id, project["id"], application_name)
-            if application is None and not persist_missing and (project_id or application_id):
+            if application is None and not persist_missing:
                 raise CatalogError(
                     "APPLICATION_NOT_FOUND",
                     "no application/service with that name belongs to the selected project",

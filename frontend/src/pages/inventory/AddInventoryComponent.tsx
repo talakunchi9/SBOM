@@ -33,6 +33,7 @@ export const AddInventoryComponent: React.FC = () => {
   const [purlManuallyEdited, setPurlManuallyEdited] = useState(false);
   const [riskLevel, setRiskLevel] = useState<Severity | 'Safe'>('Safe');
   const [createdBy, setCreatedBy] = useState('Asha Mehta');
+  const [reason, setReason] = useState('');
 
   // Modal State for Upload File
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -58,28 +59,28 @@ export const AddInventoryComponent: React.FC = () => {
     e.preventDefault();
     if (saving) return;
 
-    const trimmedProject = projectName.trim();
-    const trimmedApp = projectApplication.trim();
+    const trimmedProject = (selectedProject?.name || projectName || '').trim();
+    const trimmedApp = (selectedApplication?.name || projectApplication || '').trim();
     const trimmedComp = componentName.trim();
     const trimmedPkg = packageName.trim() || trimmedComp;
     const trimmedVer = version.trim();
     const trimmedFile = fileName.trim() || 'package.json';
     const trimmedCreatedBy = createdBy.trim() || 'Asha Mehta';
 
-    if (!selectedProject?.id) {
+    if (!trimmedProject) {
       addToast({
         type: 'warning',
         title: 'Validation Error',
-        message: 'Project Name is required.',
+        message: 'Application Name is required.',
       });
       return;
     }
 
-    if (!selectedApplication?.id) {
+    if (!trimmedApp) {
       addToast({
         type: 'warning',
         title: 'Validation Error',
-        message: 'Project Application is required.',
+        message: 'Module / Service is required.',
       });
       return;
     }
@@ -102,6 +103,15 @@ export const AddInventoryComponent: React.FC = () => {
       return;
     }
 
+    if (!reason.trim()) {
+      addToast({
+        type: 'warning',
+        title: 'Validation Error',
+        message: 'Reason for addition is required for audit trail.',
+      });
+      return;
+    }
+
     const finalPurl =
       purl.trim() ||
       `pkg:${ecosystem.toLowerCase()}/${trimmedPkg}@${trimmedVer}`;
@@ -113,9 +123,9 @@ export const AddInventoryComponent: React.FC = () => {
         packageName: trimmedPkg,
         version: trimmedVer,
         project: trimmedProject,
-        projectId: selectedProject.id,
+        projectId: selectedProject?.id || undefined,
         projectApplication: trimmedApp,
-        applicationId: selectedApplication.id,
+        applicationId: selectedApplication?.id || undefined,
         fileName: trimmedFile,
         fieldType: 'Library',
         ecosystem,
@@ -128,7 +138,7 @@ export const AddInventoryComponent: React.FC = () => {
         cves: 0,
         purl: finalPurl,
         createdBy: trimmedCreatedBy,
-      });
+      }, reason.trim());
     } catch (error) {
       addToast({
         type: 'error',
@@ -196,8 +206,12 @@ export const AddInventoryComponent: React.FC = () => {
               <ProjectApplicationSelect
                 variant="form"
                 required
-                projectLabel="Project Name"
-                applicationLabel="Project Application"
+                allowCreate={true}
+                freeform={true}
+                projectLabel="Application Name"
+                applicationLabel="Module / Service"
+                projectHint="Select an existing application or type a new one."
+                applicationHint="Select a module or type a new one."
                 value={{ project: selectedProject, application: selectedApplication }}
                 onChange={({ project, application }) => {
                   setSelectedProject(project);
@@ -268,6 +282,21 @@ export const AddInventoryComponent: React.FC = () => {
                   onChange={(e) => setFileName(e.target.value)}
                   placeholder="e.g. package.json, pom.xml, app.js"
                   className="w-full px-2.5 py-1.5 text-xs font-mono bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs"
+                />
+              </div>
+
+              {/* Reason for Addition */}
+              <div className="sm:col-span-3">
+                <label className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-tight mb-1">
+                  Reason for Addition / Justification <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Approved dependency addition for auth microservice (Jira SEC-102)"
+                  className="w-full px-2.5 py-1.5 text-xs bg-gray-50/70 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 focus:bg-white dark:focus:bg-gray-850 transition-colors shadow-2xs"
                 />
               </div>
             </div>

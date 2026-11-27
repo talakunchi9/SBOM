@@ -49,6 +49,14 @@ class Row:
         """Column names, so dict(row) uses the mapping protocol."""
         return list(self._index)
 
+    def get(self, key, default=None):
+        if key in self._index:
+            return self._values[self._index[key]]
+        return default
+
+    def __contains__(self, key) -> bool:
+        return key in self._index
+
 
 class Result:
     def __init__(self, rows: list) -> None:

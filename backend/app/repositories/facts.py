@@ -5,6 +5,7 @@ Snapshot reads still return the dictionaries the API already uses.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import uuid
 from typing import Any
 
@@ -20,30 +21,57 @@ _CHECKS = (
 )
 
 
+def _safe_get(row: Any, key: str, index: int) -> Any:
+    """Safely extract field from Row wrapper, dict, or tuple."""
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (TypeError, KeyError, IndexError):
+        try:
+            return row[index]
+        except (IndexError, TypeError):
+            return None
+
+
 def resolve_catalog_ids(
     db,
     organization_id: str,
     project_name: str,
     application_name: str,
 ) -> tuple[str | None, str | None]:
-    """Map the names stored on a scan to project and application ids."""
+    """Map the names or IDs stored on a scan to application and module ids."""
     project_name = (project_name or "").strip()
     application_name = (application_name or "").strip()
     if not (organization_id or "").strip() or not project_name:
         return None, None
+
     row = db.execute(
-        """SELECT p.id AS project_id, a.id AS application_id
-           FROM projects p
-           LEFT JOIN applications a
-             ON a.project_id = p.id
-            AND a.organization_id = p.organization_id
-            AND a.name = ?
-           WHERE p.organization_id = ? AND p.name = ?""",
-        (application_name, organization_id, project_name),
+        """SELECT p.id AS project_id, m.id AS application_id
+           FROM applications p
+           LEFT JOIN modules m
+             ON m.application_id = p.id
+            AND m.organization_id = p.organization_id
+            AND (m.name = ? OR lower(m.name) = lower(?) OR m.id = ?)
+           WHERE p.organization_id = ? 
+             AND (p.name = ? OR lower(p.name) = lower(?) OR p.id = ?)
+           LIMIT 1""",
+        (
+            application_name,
+            application_name,
+            application_name,
+            organization_id,
+            project_name,
+            project_name,
+            project_name,
+        ),
     ).fetchone()
+
     if row is None:
         return None, None
-    return row["project_id"], row["application_id"]
+    return _safe_get(row, "project_id", 0), _safe_get(row, "application_id", 1)
 
 
 def stored_metadata(raw: dict | None) -> dict:
@@ -84,18 +112,29 @@ def persist_snapshot_facts(db, snap: dict[str, Any], components: list[dict[str, 
         target = str(dep.get("to_component_id") or "")
         if source in kept and target in kept:
             children.setdefault(source, []).append(target)
+    now = datetime.now(timezone.utc)
     for comp in components:
         raw = comp.get("raw") if isinstance(comp.get("raw"), dict) else {}
         status = raw.get("compliance_status") if isinstance(raw.get("compliance_status"), dict) else {}
         flags = [status.get(code) if isinstance(status.get(code), bool) else None for code in _CHECKS]
+        prior = db.execute(
+            """SELECT MIN(sc.created_at) AS first_date
+               FROM sbom_components sc
+               WHERE lower(sc.name) = lower(?) AND sc.sbom_id <> ?""",
+            (comp.get("name") or "", sbom_id),
+        ).fetchone()
+        first_date = _safe_get(prior, "first_date", 0) if prior else None
+        first_det = first_date if first_date else now
         db.execute(
             """UPDATE sbom_components
                SET dependency_depth = COALESCE(?, dependency_depth),
                    depends_on = ?,
                    ntia_supplier = ?, ntia_name = ?, ntia_version = ?, ntia_identifier = ?,
-                   ntia_relationship = ?, ntia_author = ?, ntia_timestamp = ?
+                   ntia_relationship = ?, ntia_author = ?, ntia_timestamp = ?,
+                   first_detected_at = COALESCE(first_detected_at, ?),
+                   last_detected_at = ?
                WHERE id = ?""",
-            (_depth(raw), children.get(comp["id"]) or [], *flags, comp["id"]),
+            (_depth(raw), children.get(comp["id"]) or [], *flags, first_det, now, comp["id"]),
         )
     _persist_findings(
         db,
@@ -112,10 +151,13 @@ def overlay_snapshot_facts(db, snap: dict[str, Any]) -> None:
     org_id = str(snap.get("organization_id") or "default").strip() or "default"
     project_name = str(snap.get("project_id") or "").strip()
     findings = db.execute(
-        """SELECT f.sbom_component_id, v.vulnerability_key, v.reference_urls, f.source, f.severity,
+        """SELECT DISTINCT ON (f.sbom_component_id, v.vulnerability_key)
+                  f.sbom_component_id, v.vulnerability_key, v.reference_urls, f.source, f.severity,
                   f.cvss_score, f.cvss_vector, f.description, f.fixed_version,
                   COALESCE(t.status, f.status, 'Open') AS status,
-                  COALESCE(t.vex_status, f.vex_status, 'affected') AS vex_status
+                  COALESCE(t.vex_status, f.vex_status, 'affected') AS vex_status,
+                  COALESCE(t.justification, '') AS justification,
+                  COALESCE(t.owner, '') AS owner
            FROM findings f
            JOIN vulnerabilities v ON v.id = f.vulnerability_id
            LEFT JOIN vulnerability_triage t
@@ -123,30 +165,34 @@ def overlay_snapshot_facts(db, snap: dict[str, Any]) -> None:
             AND t.organization_id = ?
             AND (t.project_name = ? OR t.project_name = '')
            WHERE f.sbom_id = ?
-           ORDER BY v.vulnerability_key""",
+           ORDER BY f.sbom_component_id, v.vulnerability_key,
+                    CASE WHEN t.project_name <> '' THEN 0 ELSE 1 END""",
         (org_id, project_name, snap["id"]),
     ).fetchall()
     matches = []
     attached: dict[str, list[dict[str, Any]]] = {}
     for row in findings:
-        score = float(row["cvss_score"] or 0)
-        urls = [url for url in (row["reference_urls"] or []) if url]
+        score = float(_safe_get(row, "cvss_score", 5) or 0)
+        raw_urls = _safe_get(row, "reference_urls", 2)
+        urls = [url for url in (raw_urls or []) if url]
         record = {
-            "component_id": row["sbom_component_id"],
-            "vulnerability_id": row["vulnerability_key"],
-            "source": row["source"] or "",
-            "severity": row["severity"] or "UNKNOWN",
+            "component_id": _safe_get(row, "sbom_component_id", 0),
+            "vulnerability_id": _safe_get(row, "vulnerability_key", 1),
+            "source": _safe_get(row, "source", 3) or "",
+            "severity": _safe_get(row, "severity", 4) or "UNKNOWN",
             "cvss_score": score,
-            "cvss_vector": row["cvss_vector"] or "",
-            "description": row["description"] or "",
-            "fixed_version": row["fixed_version"] or "",
-            "status": row["status"] or "Open",
-            "vex_status": row["vex_status"] or "affected",
+            "cvss_vector": _safe_get(row, "cvss_vector", 6) or "",
+            "description": _safe_get(row, "description", 7) or "",
+            "fixed_version": _safe_get(row, "fixed_version", 8) or "",
+            "status": _safe_get(row, "status", 9) or "Open",
+            "vex_status": _safe_get(row, "vex_status", 10) or "affected",
+            "justification": _safe_get(row, "justification", 11) or "",
+            "owner": _safe_get(row, "owner", 12) or "",
         }
         if urls:
             record["references"] = urls
         matches.append(record)
-        attached.setdefault(row["sbom_component_id"], []).append(
+        attached.setdefault(record["component_id"], []).append(
             {
                 "id": record["vulnerability_id"],
                 "severity": record["severity"],
@@ -162,21 +208,30 @@ def overlay_snapshot_facts(db, snap: dict[str, Any]) -> None:
     snap["raw_metadata"] = metadata
     flags = db.execute(
         """SELECT id, ntia_supplier, ntia_name, ntia_version, ntia_identifier,
-                  ntia_relationship, ntia_author, ntia_timestamp
+                  ntia_relationship, ntia_author, ntia_timestamp, first_detected_at, last_detected_at
            FROM sbom_components WHERE sbom_id = ?""",
         (snap["id"],),
     ).fetchall()
-    by_id = {row["id"]: row for row in flags}
+    by_id = {_safe_get(row, "id", 0): row for row in flags}
     for comp in snap.get("components") or []:
         raw = dict(comp.get("raw") or {})
         if comp["id"] in attached:
             raw["vulnerabilities"] = attached[comp["id"]]
         row = by_id.get(comp["id"])
         if row is not None:
+            first_det = _safe_get(row, "first_detected_at", 8)
+            last_det = _safe_get(row, "last_detected_at", 9)
+            if first_det:
+                comp["first_detected_at"] = str(first_det)
+                comp["first_scan_date"] = str(first_det)
+            if last_det:
+                comp["last_detected_at"] = str(last_det)
+                comp["last_scan_date"] = str(last_det)
             status = {}
-            for code in _CHECKS:
-                if row[code] is not None:
-                    status[code] = bool(row[code])
+            for i, code in enumerate(_CHECKS, start=1):
+                val = _safe_get(row, code, i)
+                if val is not None:
+                    status[code] = bool(val)
             if status:
                 raw["compliance_status"] = status
                 raw["compliance_pass"] = all(status.values())
@@ -209,8 +264,8 @@ def _persist_findings(
                ORDER BY CASE WHEN project_name <> '' THEN 0 ELSE 1 END LIMIT 1""",
             (org_id, key, project_name),
         ).fetchone()
-        status_val = (triage_row["status"] if triage_row else "") or match.get("status") or "Open"
-        vex_val = (triage_row["vex_status"] if triage_row else "") or match.get("vex_status") or "affected"
+        status_val = (_safe_get(triage_row, "status", 0) if triage_row else "") or match.get("status") or "Open"
+        vex_val = (_safe_get(triage_row, "vex_status", 1) if triage_row else "") or match.get("vex_status") or "affected"
         db.execute(
             """INSERT INTO findings (
                  id, sbom_id, sbom_component_id, vulnerability_id, source, severity,
@@ -278,7 +333,7 @@ def _upsert_vulnerability(db, key: str, match: dict) -> str:
     ).fetchone()
     if row is None:
         raise RuntimeError("vulnerability could not be saved")
-    return row["id"]
+    return _safe_get(row, "id", 0)
 
 
 def _severity(value: Any) -> str:

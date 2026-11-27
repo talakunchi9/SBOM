@@ -1,0 +1,68 @@
+2026-11-05 16:04:18.278 IST [8968] LOG:  starting PostgreSQL 18.6 on x86_64-windows, compiled by msvc-19.44.35229, 64-bit
+2026-11-05 16:04:18.296 IST [8968] LOG:  listening on IPv6 address "::1", port 5433
+2026-11-05 16:04:18.297 IST [8968] LOG:  listening on IPv4 address "127.0.0.1", port 5433
+2026-11-05 16:04:19.291 IST [24256] LOG:  database system was shut down at 2026-11-05 16:04:14 IST
+2026-11-05 16:04:19.354 IST [8968] LOG:  database system is ready to accept connections
+2026-11-05 16:04:25.654 IST [7688] ERROR:  unterminated quoted identifier at or near "" S-BOM\" at character 17
+2026-11-05 16:04:25.654 IST [7688] STATEMENT:  CREATE DATABASE " S-BOM\
+2026-11-05 16:09:18.947 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:11:43.069 IST [14744] LOG:  checkpoint complete: wrote 1088 buffers (6.6%), wrote 3 SLRU buffers; 1 WAL file(s) added, 0 removed, 0 recycled; write=135.255 s, sync=8.214 s, total=144.123 s; sync files=393, longest=0.154 s, average=0.021 s; distance=5717 kB, estimate=5717 kB; lsn=0/1D89E60, redo lsn=0/1D887B8
+2026-11-05 16:19:18.132 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:19:23.076 IST [14744] LOG:  checkpoint complete: wrote 33 buffers (0.2%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=3.952 s, sync=0.582 s, total=4.946 s; sync files=20, longest=0.074 s, average=0.030 s; distance=15 kB, estimate=5147 kB; lsn=0/1D8C650, redo lsn=0/1D8C5F8
+2026-11-05 16:24:18.159 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:24:25.613 IST [14744] LOG:  checkpoint complete: wrote 54 buffers (0.3%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=6.092 s, sync=1.102 s, total=7.456 s; sync files=31, longest=0.059 s, average=0.036 s; distance=154 kB, estimate=4647 kB; lsn=0/1DB30B8, redo lsn=0/1DB3060
+2026-11-05 16:27:01.489 IST [14192] ERROR:  relation "scans" does not exist at character 184
+2026-11-05 16:27:01.489 IST [14192] STATEMENT:  SELECT id, organization_id, bom_type, source_type, priority, attempts, max_attempts,
+	                              job_payload AS payload, idempotency_key
+	                       FROM scans
+	                       WHERE job_status = 'QUEUED' AND next_attempt_at <= $1
+	                       ORDER BY priority DESC, created_at ASC
+	                       LIMIT 1
+	                       FOR UPDATE SKIP LOCKED
+2026-11-05 16:27:01.557 IST [14192] ERROR:  relation "scans" does not exist at character 184
+2026-11-05 16:27:01.557 IST [14192] STATEMENT:  SELECT id, organization_id, bom_type, source_type, priority, attempts, max_attempts,
+	                              job_payload AS payload, idempotency_key
+	                       FROM scans
+	                       WHERE job_status = 'QUEUED' AND next_attempt_at <= $1
+	                       ORDER BY priority DESC, created_at ASC
+	                       LIMIT 1
+	                       FOR UPDATE SKIP LOCKED
+2026-11-05 16:27:01.565 IST [14192] ERROR:  relation "scans" does not exist at character 184
+2026-11-05 16:27:01.565 IST [14192] STATEMENT:  SELECT id, organization_id, bom_type, source_type, priority, attempts, max_attempts,
+	                              job_payload AS payload, idempotency_key
+	                       FROM scans
+	                       WHERE job_status = 'QUEUED' AND next_attempt_at <= $1
+	                       ORDER BY priority DESC, created_at ASC
+	                       LIMIT 1
+	                       FOR UPDATE SKIP LOCKED
+2026-11-05 16:27:01.568 IST [14192] ERROR:  relation "scans" does not exist at character 184
+2026-11-05 16:27:01.568 IST [14192] STATEMENT:  SELECT id, organization_id, bom_type, source_type, priority, attempts, max_attempts,
+	                              job_payload AS payload, idempotency_key
+	                       FROM scans
+	                       WHERE job_status = 'QUEUED' AND next_attempt_at <= $1
+	                       ORDER BY priority DESC, created_at ASC
+	                       LIMIT 1
+	                       FOR UPDATE SKIP LOCKED
+2026-11-05 16:29:18.692 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:29:43.355 IST [14744] LOG:  checkpoint complete: wrote 203 buffers (1.2%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=22.474 s, sync=1.671 s, total=24.664 s; sync files=131, longest=0.058 s, average=0.013 s; distance=1821 kB, estimate=4365 kB; lsn=0/1F7A780, redo lsn=0/1F7A6F0
+2026-11-05 16:30:18.850 IST [14192] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-11-05 16:30:19.199 IST [7588] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-11-05 16:33:41.448 IST [11828] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-11-05 16:34:18.368 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:34:19.001 IST [14744] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.210 s, sync=0.175 s, total=0.636 s; sync files=3, longest=0.126 s, average=0.059 s; distance=1 kB, estimate=3928 kB; lsn=0/1F7AD30, redo lsn=0/1F7ACD8
+2026-11-05 16:39:19.023 IST [14744] LOG:  checkpoint starting: time
+2026-11-05 16:39:19.613 IST [14744] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.117 s, sync=0.036 s, total=0.591 s; sync files=1, longest=0.036 s, average=0.036 s; distance=0 kB, estimate=3536 kB; lsn=0/1F7B088, redo lsn=0/1F7B030
+2026-11-05 16:39:39.733 IST [8396] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-11-05 16:39:39.735 IST [14640] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-11-05 16:51:30.400 IST [17736] ERROR:  canceling statement due to user request
+2026-11-05 16:51:30.505 IST [8968] LOG:  background worker "logical replication launcher" (PID 17736) exited with exit code 1
+2026-11-05 16:51:30.507 IST [8968] LOG:  autovacuum launcher process (PID 21528) was terminated by exception 0xC000013A
+2026-11-05 16:51:30.507 IST [8968] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-11-05 16:51:30.507 IST [8968] LOG:  terminating any other active server processes
+2026-11-05 16:51:30.686 IST [8968] LOG:  received fast shutdown request
+^C

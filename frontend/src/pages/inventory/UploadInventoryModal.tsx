@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Folder,
   Upload,
@@ -690,8 +691,8 @@ export const UploadInventoryModal: React.FC<UploadInventoryModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
       <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-2xl w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden my-6">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -889,7 +890,8 @@ export const UploadInventoryModal: React.FC<UploadInventoryModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

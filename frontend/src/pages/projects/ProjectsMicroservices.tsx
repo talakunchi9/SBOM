@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { NavLink, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import {
   FolderGit2,
@@ -127,10 +128,9 @@ export const ProjectsMicroservices: React.FC = () => {
             to={`/software-inventory${tabSearch}`}
             end
             className={({ isActive }) =>
-              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
-                isActive
-                  ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
-                  : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
+              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${isActive
+                ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
+                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
               }`
             }
           >
@@ -141,24 +141,22 @@ export const ProjectsMicroservices: React.FC = () => {
           <NavLink
             to={`/software-inventory/projects${tabSearch}`}
             className={({ isActive }) =>
-              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
-                isActive
-                  ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
-                  : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
+              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${isActive
+                ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
+                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
               }`
             }
           >
             <FolderGit2 className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            <span>Projects & Microservices</span>
+            <span>Applications & Microservices</span>
           </NavLink>
 
           <NavLink
             to={`/software-inventory/artifacts${tabSearch}`}
             className={({ isActive }) =>
-              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${
-                isActive
-                  ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
-                  : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
+              `flex items-center gap-2 py-2.5 px-3.5 text-xs font-semibold rounded-t-lg transition-all cursor-pointer whitespace-nowrap shrink-0 border-b-2 ${isActive
+                ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-600 font-bold shadow-2xs'
+                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/40'
               }`
             }
           >
@@ -176,8 +174,7 @@ export const ProjectsMicroservices: React.FC = () => {
                 <FolderGit2 className="w-4 h-4" />
               </div>
               <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-                PROJECTS
-              </span>
+                APPLICATIONS              </span>
             </div>
             <ChevronRight className="w-4 h-4 text-gray-400" />
           </div>
@@ -247,7 +244,7 @@ export const ProjectsMicroservices: React.FC = () => {
       <div className="bg-white dark:bg-[#111827] border border-gray-200 dark:border-gray-800 rounded-xl p-5 shadow-2xs space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-gray-100 dark:border-gray-800">
           <div>
-            <h3 className="text-sm font-bold text-gray-900 dark:text-white">SBOM Projects</h3>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white">SBOM</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               Risk + compliance mapped per project from completed scans
             </p>
@@ -293,18 +290,19 @@ export const ProjectsMicroservices: React.FC = () => {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs min-w-[850px]">
+          <table className="w-full text-left text-xs min-w-[1000px]">
             <thead>
               <tr className="text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                <th className="pb-3 pr-4 font-semibold whitespace-nowrap">NAME</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">CLASSIFIER</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">AVG RISK LEVEL</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">COMPLIANCE</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">COMPONENTS</th>
+                <th className="pb-3 pr-4 font-semibold whitespace-nowrap">APP NAME</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">OWNERSHIP</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">SOURCE</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">REPO/BRANCH</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">VERSION</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">MODULE</th>
+                <th className="pb-3 px-4 font-semibold whitespace-nowrap">LAST SCAN</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">VULNS</th>
                 <th className="pb-3 px-4 font-semibold whitespace-nowrap">TAGS</th>
-                <th className="pb-3 px-4 font-semibold whitespace-nowrap">HISTORY</th>
-                <th className="pb-3 pl-4 font-semibold whitespace-nowrap text-right">ACTIONS</th>
+                <th className="pb-3 pl-4 font-semibold whitespace-nowrap text-right">ACTION</th>
               </tr>
             </thead>
             {projectsList.length > 0 ? (
@@ -322,6 +320,7 @@ export const ProjectsMicroservices: React.FC = () => {
 
                   return (
                     <tr key={p.id} className="hover:bg-gray-50/70 dark:hover:bg-gray-800/40 transition-colors">
+                      {/* 1. APP NAME */}
                       <td
                         onClick={() => setSelectedProjectModal(p)}
                         className="py-3.5 pr-4 font-bold text-blue-600 dark:text-blue-400 whitespace-nowrap cursor-pointer hover:underline hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
@@ -329,24 +328,46 @@ export const ProjectsMicroservices: React.FC = () => {
                       >
                         {p.name}
                       </td>
-                      <td className="py-3.5 px-4 text-gray-600 dark:text-gray-400 whitespace-nowrap">{p.classifier}</td>
+
+                      {/* 2. OWNERSHIP */}
+                      <td className="py-3.5 px-4 text-gray-700 dark:text-gray-300 whitespace-nowrap font-medium text-xs">
+                        {p.ownership || '—'}
+                      </td>
+
+                      {/* 3. SOURCE */}
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold border ${riskColor(p.risk)}`}>
-                          {p.risk}
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${(p.source || 'Internal').toLowerCase() === 'external' ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 dark:border-purple-900/50' : 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900/50'}`}>
+                          {p.source || 'Internal'}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 font-semibold text-gray-900 dark:text-white whitespace-nowrap">{p.compliance}</td>
-                      <td
-                        onClick={() => navigate(`/software-inventory?project=${encodeURIComponent(p.name)}`)}
-                        className="py-3.5 px-4 font-semibold text-blue-600 dark:text-blue-400 whitespace-nowrap cursor-pointer hover:underline"
-                        title={`View ${compCount} components in Software Inventory for ${p.name}`}
-                      >
-                        <span className="font-mono">{compCount}</span>
+
+                      {/* 4. REPO/BRANCH */}
+                      <td className="py-3.5 px-4 text-gray-600 dark:text-gray-400 font-mono text-[11px] whitespace-nowrap truncate max-w-[170px]" title={p.repo_branch || '-'}>
+                        {p.repo_branch || '-'}
                       </td>
+
+                      {/* 5. VERSION */}
+                      <td className="py-3.5 px-4 text-gray-700 dark:text-gray-300 font-mono text-[11px] whitespace-nowrap">
+                        <span className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 rounded font-mono text-[11px]">
+                          {p.version || '—'}
+                        </span>
+                      </td>
+
+                      {/* 6. MODULE */}
+                      <td className="py-3.5 px-4 font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                        {p.module || 'Main'}
+                      </td>
+
+                      {/* 7. LAST SCAN */}
+                      <td className="py-3.5 px-4 text-gray-500 dark:text-gray-400 whitespace-nowrap" title={p.last_scanned_at || ''}>
+                        {relativeTime(p.last_scanned_at)}
+                      </td>
+
+                      {/* 8. VULNS */}
                       <td
-                        onClick={() => navigate(`/vulnerabilities?project=${encodeURIComponent(p.name)}`)}
+                        onClick={() => navigate(`/vulnerabilities?project=${encodeURIComponent(p.name)}&app=${encodeURIComponent(p.module || '')}`)}
                         className="py-3.5 px-4 font-semibold whitespace-nowrap cursor-pointer hover:underline"
-                        title={`View ${vulnCount} findings in Vulnerability Management for ${p.name}`}
+                        title={`View findings in Vulnerability Management for ${p.name}`}
                       >
                         {vulnCount > 0 ? (
                           <span className="text-red-600 dark:text-red-400 font-bold font-mono">{vulnCount}</span>
@@ -354,9 +375,11 @@ export const ProjectsMicroservices: React.FC = () => {
                           <span className="text-gray-400 font-mono">0</span>
                         )}
                       </td>
+
+                      {/* 9. TAGS */}
                       <td className="py-3.5 px-4">
                         <div className="flex gap-1 flex-wrap">
-                          {p.tags.map((t) => (
+                          {(p.tags || []).map((t) => (
                             <span
                               key={t}
                               className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-[10px] rounded text-gray-600 dark:text-gray-400 whitespace-nowrap"
@@ -366,36 +389,18 @@ export const ProjectsMicroservices: React.FC = () => {
                           ))}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-gray-500 dark:text-gray-400 whitespace-nowrap">
-                        {relativeTime(p.last_scanned_at)}
-                      </td>
+
+                      {/* 10. ACTION (Only View Option) */}
                       <td className="py-3.5 pl-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
+                        <div className="flex items-center justify-end">
                           <button
                             type="button"
                             onClick={() => setSelectedProjectModal(p)}
-                            className="p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 dark:text-gray-400 dark:hover:text-blue-300 transition-colors cursor-pointer"
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer flex items-center gap-1.5"
                             title={`View details for ${p.name}`}
                           >
                             <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/software-inventory?project=${encodeURIComponent(p.name)}`)}
-                            className="px-2 py-1 text-[11px] font-semibold rounded-md text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer flex items-center gap-1"
-                            title={`Inspect ${compCount} components`}
-                          >
-                            <Package className="w-3 h-3" />
-                            <span>Components</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/vulnerabilities?project=${encodeURIComponent(p.name)}`)}
-                            className="px-2 py-1 text-[11px] font-semibold rounded-md text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/40 transition-colors cursor-pointer flex items-center gap-1"
-                            title={`Inspect ${vulnCount} findings`}
-                          >
-                            <ShieldCheck className="w-3 h-3" />
-                            <span>Vulns</span>
+                            <span>View Details</span>
                           </button>
                         </div>
                       </td>
@@ -459,8 +464,8 @@ export const ProjectsMicroservices: React.FC = () => {
         const projectVulns = (vulnerabilities || []).filter((v) => (v.project || '').toLowerCase().trim() === p.name.toLowerCase().trim());
         const vulnCount = projectVulns.length > 0 ? projectVulns.length : p.vulns;
 
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 animate-fadeIn">
+        return createPortal(
+          <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn">
             <div className="bg-white dark:bg-[#111827] rounded-xl max-w-xl w-full p-6 shadow-2xl border border-gray-200 dark:border-gray-800 space-y-4">
               <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100 dark:border-gray-800">
                 <div>
@@ -651,11 +656,10 @@ export const ProjectsMicroservices: React.FC = () => {
                                 if (scanItem.scanId) params.set('scan', scanItem.scanId);
                                 navigate(`/vulnerabilities?${params.toString()}`);
                               }}
-                              className={`px-2 py-1 rounded text-[11px] font-mono font-semibold transition-colors cursor-pointer ${
-                                scanItem.vulns > 0
-                                  ? 'bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 text-rose-700 dark:text-rose-300'
-                                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500'
-                              }`}
+                              className={`px-2 py-1 rounded text-[11px] font-mono font-semibold transition-colors cursor-pointer ${scanItem.vulns > 0
+                                ? 'bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 text-rose-700 dark:text-rose-300'
+                                : 'bg-gray-100 dark:bg-gray-800 text-gray-500'
+                                }`}
                               title={`Filter findings for ${scanItem.app}`}
                             >
                               {scanItem.vulns} vulns
@@ -678,7 +682,8 @@ export const ProjectsMicroservices: React.FC = () => {
                 </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body
         );
       })()}
     </div>

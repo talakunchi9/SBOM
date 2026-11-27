@@ -96,12 +96,15 @@ class ScanRepo:
 
     def get_scan(self, scan_id: str) -> dict[str, Any] | None:
         row = self.db.execute(
-            """SELECT id, organization_id, project_id, application_id, application_name,
-                      application_version, version_strategy, bom_type, source_type, scan_status,
-                      scan_stage, error_code, error_message, idempotency_key, created_at,
-                      started_at, completed_at, COALESCE(bulk_scan_id,''), bulk_row_number,
-                      COALESCE(sbom_id,''), COALESCE(description,'')
-               FROM scans WHERE id = ?""",
+            """SELECT s.id, s.organization_id, s.project_id, s.application_id, s.application_name,
+                      s.application_version, s.version_strategy, s.bom_type, s.source_type, s.scan_status,
+                      s.scan_stage, s.error_code, s.error_message, s.idempotency_key, s.created_at,
+                      s.started_at, s.completed_at, COALESCE(s.bulk_scan_id,''), s.bulk_row_number,
+                      COALESCE(s.sbom_id,''), COALESCE(s.description,''),
+                      COALESCE(a.lifecycle_status, 'Active') as lifecycle_status
+               FROM scans s
+               LEFT JOIN applications a ON s.catalog_project_id = a.id
+               WHERE s.id = ?""",
             (scan_id,),
         ).fetchone()
         return _scan_row(row) if row else None
@@ -122,12 +125,19 @@ class ScanRepo:
         if limit <= 0 or limit > 500:
             limit = 100
         rows = self.db.execute(
-            """SELECT id, organization_id, project_id, application_id, application_name,
-                      application_version, version_strategy, bom_type, source_type, scan_status,
-                      scan_stage, error_code, error_message, idempotency_key, created_at,
-                      started_at, completed_at, COALESCE(bulk_scan_id,''), bulk_row_number,
-                      COALESCE(sbom_id,''), COALESCE(description,'')
-               FROM scans WHERE organization_id = ? AND scan_status <> 'IGNORED' ORDER BY created_at DESC LIMIT ?""",
+            """SELECT s.id, s.organization_id, s.project_id, s.application_id, s.application_name,
+                      s.application_version, s.version_strategy, s.bom_type, s.source_type, s.scan_status,
+                      s.scan_stage, s.error_code, s.error_message, s.idempotency_key, s.created_at,
+                      s.started_at, s.completed_at, COALESCE(s.bulk_scan_id,''), s.bulk_row_number,
+                      COALESCE(s.sbom_id,''), COALESCE(s.description,''),
+                      COALESCE(a.lifecycle_status, 'Active') as lifecycle_status,
+                      COALESCE(s.repository_url, '') as repository_url,
+                      COALESCE(s.branch, '') as branch,
+                      COALESCE(a.business_owner, '') as business_owner
+               FROM scans s
+               LEFT JOIN applications a ON (s.catalog_project_id = a.id OR s.project_id = a.id OR LOWER(s.project_id) = LOWER(a.name))
+               WHERE s.organization_id = ? AND s.scan_status <> 'IGNORED'
+               ORDER BY s.created_at DESC LIMIT ?""",
             (org_id, limit),
         ).fetchall()
         return [_scan_row(row) for row in rows]
@@ -256,6 +266,10 @@ def _scan_row(row) -> dict[str, Any]:
         "bulk_row": row[18] or 0,
         "snapshot_id": row[19] or "",
         "description": row[20] if len(row) > 20 and row[20] is not None else "",
+        "lifecycle_status": row[21] if len(row) > 21 and row[21] is not None else "Active",
+        "repository_url": row[22] if len(row) > 22 and row[22] is not None else "",
+        "branch": row[23] if len(row) > 23 and row[23] is not None else "",
+        "business_owner": row[24] if len(row) > 24 and row[24] is not None else "",
     }
     return scan
 
@@ -287,6 +301,8 @@ def public_scan(scan: dict[str, Any]) -> dict[str, Any]:
             "file_name": scan.get("file_name") or None,
             "repository_url": scan.get("repository_url") or None,
             "branch": scan.get("branch") or None,
+            "lifecycle_status": scan.get("lifecycle_status") or "Active",
+            "business_owner": scan.get("business_owner") or None,
         }
     )
 
@@ -603,7 +619,8 @@ class BomRepo:
             """SELECT id, sbom_id, name, version, ecosystem,
                       package_manager, package_url AS purl, cpe, content_hash AS hash, license_name AS license,
                       supplier_name AS supplier, dependency_scope AS scope, is_direct_dependency AS direct_dependency,
-                      source_manifest, raw_component AS raw, dependency_depth
+                      source_manifest, raw_component AS raw, dependency_depth,
+                      first_detected_at, last_detected_at
                FROM sbom_components WHERE sbom_id = ? ORDER BY ecosystem, name, version""",
             (snapshot_id,),
         ).fetchall()
@@ -622,6 +639,12 @@ class BomRepo:
                 "direct": bool(row["direct_dependency"]),
                 "source_manifest": row["source_manifest"],
             }
+            if row["first_detected_at"]:
+                item["first_detected_at"] = str(row["first_detected_at"])
+                item["first_scan_date"] = str(row["first_detected_at"])
+            if row["last_detected_at"]:
+                item["last_detected_at"] = str(row["last_detected_at"])
+                item["last_scan_date"] = str(row["last_detected_at"])
             if row["cpe"]:
                 item["cpe"] = row["cpe"]
             if row["hash"]:
@@ -687,10 +710,10 @@ class BomRepo:
                       c.license_name AS license, c.supplier_name AS supplier, c.is_direct_dependency AS direct_dependency,
                       c.package_name, c.component_type AS field_type, c.risk_level AS risk,
                       c.vulnerability_count AS cve_count, c.source_file_name AS file_name, c.created_by,
-                      c.created_at, p.name AS project_name, a.name AS application_name
+                      c.created_at, p.name AS project_name, m.name AS application_name
                FROM inventory_components c
-               JOIN projects p ON p.id = c.project_id
-               JOIN applications a ON a.id = c.application_id
+               JOIN applications p ON p.id = c.application_id
+               JOIN modules m ON m.id = c.module_id
                WHERE c.organization_id = ?
                {cursor_sql}
                ORDER BY c.created_at DESC, c.id DESC
@@ -760,7 +783,7 @@ class BomRepo:
                     )
                 self.db.executemany(
                     """INSERT INTO inventory_components (
-                       id, organization_id, project_id, application_id,
+                       id, organization_id, application_id, module_id,
                        name, package_name, version, component_type, source_file_name,
                        license_name, package_url, ecosystem, risk_level, vulnerability_count,
                        is_direct_dependency, supplier_name, created_by, created_at)
@@ -774,18 +797,28 @@ class BomRepo:
                 raise
         return created
 
-    def delete_inventory_component(self, organization_id: str, component_id: str) -> bool:
+    def delete_inventory_component(self, organization_id: str, component_id: str) -> dict | None:
         with self.db.lock:
             if self.db.in_transaction:
                 self.db.rollback()
             self.db.begin()
             try:
                 cur = self.db.execute(
-                    "DELETE FROM inventory_components WHERE organization_id = ? AND id = ? RETURNING id",
+                    "DELETE FROM inventory_components WHERE organization_id = ? AND id = ? RETURNING id, name, version, application_id, module_id",
                     (organization_id, component_id),
                 )
+                row = cur.fetchone()
+                if not row:
+                    cur = self.db.execute(
+                        """DELETE FROM sbom_components sc
+                           USING sboms s
+                           WHERE sc.sbom_id = s.id AND s.organization_id = ? AND sc.id = ?
+                           RETURNING sc.id, sc.name, sc.version, s.project_id AS application_id, s.application_id AS module_id""",
+                        (organization_id, component_id),
+                    )
+                    row = cur.fetchone()
                 self.db.commit()
-                return cur.fetchone() is not None
+                return dict(row) if row else None
             except Exception:
                 if self.db.in_transaction:
                     self.db.rollback()
@@ -794,12 +827,12 @@ class BomRepo:
     def _upsert_projects(self, organization_id: str, names: list[str]) -> dict[str, str]:
         _insert_ignore(
             self.db,
-            "INSERT INTO projects (id, organization_id, name)",
+            "INSERT INTO applications (id, organization_id, name)",
             "ON CONFLICT (organization_id, name) DO NOTHING",
             [(str(uuid.uuid4()), organization_id, name) for name in names],
         )
         rows = self.db.execute(
-            """SELECT id, name FROM projects
+            """SELECT id, name FROM applications
                WHERE organization_id = ? AND name = ANY(?)""",
             (organization_id, names),
         ).fetchall()
@@ -817,17 +850,17 @@ class BomRepo:
         ]
         _insert_ignore(
             self.db,
-            "INSERT INTO applications (id, project_id, organization_id, name)",
-            "ON CONFLICT (organization_id, project_id, name) DO NOTHING",
+            "INSERT INTO modules (id, application_id, organization_id, name)",
+            "ON CONFLICT (organization_id, application_id, name) DO NOTHING",
             [(row[0], row[2], row[1], row[3]) for row in rows],
         )
         found = self.db.execute(
-            """SELECT id, project_id, name FROM applications
-               WHERE organization_id = ? AND project_id = ANY(?)""",
+            """SELECT id, application_id, name FROM modules
+               WHERE organization_id = ? AND application_id = ANY(?)""",
             (organization_id, list({row[2] for row in rows})),
         ).fetchall()
         wanted = {(project_ids[project], name) for project, name in applications}
-        return {(row["project_id"], row["name"]): row["id"] for row in found if (row["project_id"], row["name"]) in wanted}
+        return {(row["application_id"], row["name"]): row["id"] for row in found if (row["application_id"], row["name"]) in wanted}
 
 
 def _prepare_inventory_component(item: dict[str, Any]) -> dict[str, Any]:

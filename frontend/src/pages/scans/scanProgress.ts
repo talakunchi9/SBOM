@@ -111,6 +111,19 @@ export function formatEventTime(value?: string): string {
   return new Date(parsed).toLocaleTimeString();
 }
 
+/** Convert a local `YYYY-MM-DD HH:MM:SS` scan timestamp into 12-hour `YYYY-MM-DD hh:MM:SS AM/PM` format. */
+export function formatScanTimestamp12h(value?: string): string {
+  if (!value) return '';
+  const match = value.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!match) return value;
+  const [, datePart, hourRaw, minute, second = '00'] = match;
+  const hour24 = Number(hourRaw);
+  if (Number.isNaN(hour24) || hour24 < 0 || hour24 > 23) return value;
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = String(hour24 % 12 || 12).padStart(2, '0');
+  return `${datePart} ${hour12}:${minute}:${second} ${period}`;
+}
+
 export function displayStatus(status: string): string {
   const normalized = status.toLowerCase();
   if (normalized === 'dead_letter') return 'Failed';

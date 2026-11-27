@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, NavLink, useSearchParams, useLocation } from 'react-router-dom';
 import {
   Package,
@@ -14,6 +15,7 @@ import {
   CheckCircle2,
   ChevronDown,
   Layers,
+  GitBranch,
   X,
   FileSpreadsheet,
   ShieldCheck,
@@ -23,7 +25,11 @@ import {
   Plus,
   Trash2,
   Folder,
+  History,
+  ClipboardList,
+  AlertTriangle,
 } from 'lucide-react';
+import * as api from '../../api/client';
 import { useAppState } from '../../context/AppStateContext';
 import { ComponentFieldType, LicenseType, Severity, Ecosystem } from '../../types';
 import { parseUploadedSbom, type ParsedSbomUpload } from './parseUploadedSbom';
@@ -57,10 +63,174 @@ export const SoftwareInventory: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { addToast, components, projects, scansHistory, setAddDependencyModalOpen, addComponents, deleteComponent } = useAppState();
+  const { addToast, components, projects, scansHistory, vulnerabilities, setAddDependencyModalOpen, addComponents, deleteComponent } = useAppState();
   const tabSearch = location.search;
 
+  // Memoized map of component occurrences across vulnerability findings
+  const vulnOccurrenceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    (vulnerabilities || []).forEach((v) => {
+      const pkg = (v.package || '').toLowerCase().trim();
+      const ver = (v.version || '').trim();
+      if (pkg) {
+        if (ver) {
+          const key = `${pkg}@${ver}`;
+          map.set(key, (map.get(key) || 0) + 1);
+        }
+        map.set(pkg, (map.get(pkg) || 0) + 1);
+      }
+    });
+    return map;
+  }, [vulnerabilities]);
+
+  // SC-03: Package occurrence tracking & drawer state
+  const [occurrenceStats, setOccurrenceStats] = useState<
+    Record<string, { count: number; appsCount: number; modulesCount: number }>
+  >({});
+  const [selectedPackageForDrawer, setSelectedPackageForDrawer] = useState<string | null>(null);
+  const [drawerData, setDrawerData] = useState<api.PackageOccurrencesResponse | null>(null);
+  const [loadingDrawer, setLoadingDrawer] = useState(false);
+  const [drawerFilter, setDrawerFilter] = useState('');
+
+  // Memoized map of component occurrences across all applications
+  const componentOccurrenceMap = useMemo(() => {
+    const map = new Map<string, { count: number; appsCount: number; apps: Set<string>; modulesCount: number }>();
+    (components || []).forEach((c) => {
+      const pkg = (c.packageName || c.name || '').toLowerCase().trim();
+      const app = (c.project || (c as any).projectName || 'Application').trim();
+      if (!pkg) return;
+      const cur = map.get(pkg) || { count: 0, appsCount: 0, apps: new Set<string>(), modulesCount: 0 };
+      cur.count += 1;
+      if (app) cur.apps.add(app);
+      cur.appsCount = cur.apps.size || 1;
+      map.set(pkg, cur);
+    });
+    return map;
+  }, [components]);
+
+  const handleOpenOccurrenceDrawer = async (pkgName: string, purl?: string, currentComp?: any) => {
+    setSelectedPackageForDrawer(pkgName);
+    setLoadingDrawer(true);
+    setDrawerFilter('');
+
+    try {
+      const res = await api.getPackageOccurrences(pkgName, purl);
+      if (res && res.usages && res.usages.length > 0) {
+        setDrawerData(res);
+        setLoadingDrawer(false);
+        return;
+      }
+    } catch {
+      // API call failed; fall through to local fallback
+    }
+
+    const localMatches = (components || []).filter(
+      (comp) => (comp.packageName || comp.name || '').toLowerCase() === pkgName.toLowerCase()
+    );
+    const usages: api.PackageOccurrenceUsage[] = localMatches.map((m) => ({
+      application_id: m.project,
+      application_name: m.project,
+      module_id: (m as any).module || (m as any).projectApplication || m.project,
+      module_name: (m as any).module || (m as any).projectApplication || 'Default Module',
+      repository_url: '',
+      branch: 'main',
+      package_location: (m as any).fileName || (m as any).sourceManifest || (m as any).packageLocation || 'package.json',
+      direct_dependency: (m as any).direct ?? m.directDependency ?? true,
+      scope: (m as any).scope || 'runtime',
+      detection_method: 'Manifest / Lockfile',
+      confidence: 1.0,
+      version: m.version,
+      purl: m.purl || `pkg:npm/${m.name}@${m.version}`,
+      first_detected_at: null,
+      last_detected_at: null,
+      status: 'Active',
+    }));
+
+    setDrawerData({
+      package_name: pkgName,
+      occurrence_count: Math.max(usages.length, 1),
+      applications_count: Math.max(new Set(usages.map((u) => u.application_name)).size, 1),
+      modules_count: Math.max(new Set(usages.map((u) => u.module_name)).size, 1),
+      usages: usages.length > 0 ? usages : [
+        {
+          application_id: currentComp?.projectName || currentComp?.project || 'Application',
+          application_name: currentComp?.projectName || currentComp?.project || 'Application',
+          module_id: currentComp?.projectApplication || 'Main',
+          module_name: currentComp?.projectApplication || 'Main',
+          repository_url: '',
+          branch: 'main',
+          package_location: currentComp?.fileName || 'package.json',
+          direct_dependency: currentComp?.directDependency ?? true,
+          scope: 'runtime',
+          detection_method: 'CycloneDX',
+          confidence: 1.0,
+          version: currentComp?.version || '1.0.0',
+          purl: currentComp?.purl || `pkg:npm/${pkgName}@${currentComp?.version || '1.0.0'}`,
+          first_detected_at: null,
+          last_detected_at: null,
+          status: 'Active',
+        },
+      ],
+    });
+    setLoadingDrawer(false);
+  };
+
+  const filteredOccurrenceUsages = useMemo(() => {
+    if (!drawerData?.usages) return [];
+    if (!drawerFilter.trim()) return drawerData.usages;
+    const q = drawerFilter.toLowerCase().trim();
+    return drawerData.usages.filter((u) =>
+      (u.application_name || '').toLowerCase().includes(q) ||
+      (u.module_name || '').toLowerCase().includes(q) ||
+      (u.version || '').toLowerCase().includes(q) ||
+      (u.package_location || '').toLowerCase().includes(q) ||
+      (u.status || '').toLowerCase().includes(q)
+    );
+  }, [drawerData, drawerFilter]);
+
   // Search and filter state
+  // Delete with Reason state
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; version: string } | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+
+  // Package History Drawer state
+  const [historyPackage, setHistoryPackage] = useState<string | null>(null);
+  const [historyData, setHistoryData] = useState<api.PackageHistoryResponse | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // Audit Log Drawer state
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [auditItems, setAuditItems] = useState<api.InventoryAuditLogItem[]>([]);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+
+  const handleOpenHistory = async (packageName: string) => {
+    setHistoryPackage(packageName);
+    setLoadingHistory(true);
+    try {
+      const data = await api.getPackageHistory(packageName);
+      setHistoryData(data);
+    } catch (err) {
+      console.error('Failed to fetch package history', err);
+      addToast({ type: 'error', title: 'Error', message: 'Could not load package history.' });
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const handleOpenAuditLog = async () => {
+    setShowAuditLog(true);
+    setLoadingAudit(true);
+    try {
+      const res = await api.getInventoryAuditLog();
+      setAuditItems(res.items || []);
+    } catch (err) {
+      console.error('Failed to load audit log', err);
+      addToast({ type: 'error', title: 'Error', message: 'Could not load inventory audit log.' });
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
+
   const [projectFilter, setProjectFilter] = useState<string>(searchParams.get('project') || 'All Projects');
   const [scanFilter, setScanFilter] = useState<string>(searchParams.get('scan') || 'all');
   const [appFilter, setAppFilter] = useState<string>(searchParams.get('app') || 'all');
@@ -410,16 +580,65 @@ export const SoftwareInventory: React.FC = () => {
   const endIndex = Math.min(startIndex + pageSize, totalItems);
   const paginatedComponents = filteredComponents.slice(startIndex, endIndex);
 
+  // Fetch occurrence statistics for paginated components
+  useEffect(() => {
+    if (!paginatedComponents || paginatedComponents.length === 0) return;
+    const uniquePackages = Array.from(
+      new Set(paginatedComponents.map((c) => (c.packageName || c.name || '').trim()).filter(Boolean))
+    );
+    let isMounted = true;
+
+    uniquePackages.forEach(async (pkgName) => {
+      const key = pkgName.toLowerCase();
+      if (occurrenceStats[key]) return;
+
+      try {
+        const res = await api.getPackageOccurrences(pkgName);
+        if (isMounted && res && res.occurrence_count > 0) {
+          setOccurrenceStats((prev) => ({
+            ...prev,
+            [key]: {
+              count: res.occurrence_count,
+              appsCount: res.applications_count,
+              modulesCount: res.modules_count,
+            },
+          }));
+          return;
+        }
+      } catch {
+        // Fall through to local fallback
+      }
+
+      if (isMounted) {
+        const local = componentOccurrenceMap.get(key);
+        if (local) {
+          setOccurrenceStats((prev) => ({
+            ...prev,
+            [key]: {
+              count: local.count,
+              appsCount: local.appsCount,
+              modulesCount: local.appsCount,
+            },
+          }));
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [paginatedComponents, componentOccurrenceMap, occurrenceStats]);
 
   // Export CSV handler
   const handleExportCsv = () => {
     const dataToExport = filteredComponents;
     const headers = [
-      'Project Name',
-      'Project Application',
+      'Application Name',
+      'Module Name',
       'Component Name',
       'Package Name',
       'Version',
+      'Occurrence',
       'File Name',
       'License',
       'Vulnerabilities',
@@ -428,18 +647,27 @@ export const SoftwareInventory: React.FC = () => {
     ];
     const rows = [
       headers,
-      ...dataToExport.map((c) => [
-        c.projectName,
-        c.projectApplication,
-        c.name,
-        c.packageName,
-        c.version,
-        c.fileName || c.fieldType || 'package.json',
-        c.license,
-        c.vulnerabilities,
-        c.purl,
-        c.riskLevel,
-      ]),
+      ...dataToExport.map((c) => {
+        const pkgKey = (c.packageName || c.name || '').toLowerCase().trim();
+        const stats = occurrenceStats[pkgKey];
+        const local = componentOccurrenceMap.get(pkgKey);
+        const count = stats?.count ?? local?.count ?? 1;
+        const appsCount = stats?.appsCount ?? local?.appsCount ?? 1;
+        const occString = `${count} (${appsCount} app${appsCount === 1 ? '' : 's'})`;
+        return [
+          c.projectName,
+          c.projectApplication,
+          c.name,
+          c.packageName,
+          c.version,
+          occString,
+          c.fileName || c.fieldType || 'package.json',
+          c.license,
+          c.vulnerabilities,
+          c.purl,
+          c.riskLevel,
+        ];
+      }),
     ];
     exportTableToCsv(`software-inventory-${Date.now()}.csv`, rows);
     addToast({
@@ -548,7 +776,7 @@ export const SoftwareInventory: React.FC = () => {
             }
           >
             <FolderGit2 className="w-4 h-4" />
-            <span>Projects & Microservices</span>
+            <span>Applications & Microservices</span>
           </NavLink>
 
           <NavLink
@@ -862,8 +1090,8 @@ export const SoftwareInventory: React.FC = () => {
               type="button"
               onClick={() => setShowFilters((prev) => !prev)}
               className={`px-3 py-2 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0 ${showFilters || (projectFilter !== 'All Projects' || typeFilter !== 'All Types' || licenseFilter !== 'All Licenses' || riskFilter !== 'All Risk Levels' || sourceFilter !== 'All Sources')
-                  ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
-                  : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600'
+                ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-600 text-blue-600 dark:text-blue-400'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:border-blue-300 dark:hover:border-blue-700 hover:text-blue-600'
                 }`}
               title="Toggle Filters"
             >
@@ -1050,11 +1278,12 @@ export const SoftwareInventory: React.FC = () => {
           <table className="w-full text-left text-xs min-w-[1100px]">
             <thead>
               <tr className="bg-slate-50/90 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 border-b border-slate-200/80 dark:border-slate-700/80">
-                <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">PROJECT NAME</th>
-                <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">PROJECT APPLICATION</th>
+                <th className="py-2.5 pl-4 pr-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">APPLICATION NAME</th>
+                <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">MODULE NAME</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">COMPONENT NAME</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">PACKAGE NAME</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">VERSION</th>
+                <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">OCCURRENCE</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">FILE NAME</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">LICENSE</th>
                 <th className="py-2.5 px-3 font-bold uppercase tracking-wider text-[11px] whitespace-nowrap">VULNERABILITIES</th>
@@ -1067,7 +1296,7 @@ export const SoftwareInventory: React.FC = () => {
               {paginatedComponents.length > 0 ? (
                 paginatedComponents.map((c) => (
                   <tr key={c.id} className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors">
-                    {/* PROJECT NAME */}
+                    {/* APPLICATION NAME */}
                     <td className="py-3 pl-4 pr-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
                         <FolderGit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -1081,7 +1310,7 @@ export const SoftwareInventory: React.FC = () => {
                       </div>
                     </td>
 
-                    {/* PROJECT APPLICATION */}
+                    {/* MODULE NAME */}
                     <td className="py-3 px-3 whitespace-nowrap">
                       <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-mono">
                         {c.projectApplication}
@@ -1105,6 +1334,37 @@ export const SoftwareInventory: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 px-3 font-mono text-gray-600 dark:text-gray-400 whitespace-nowrap">{c.version}</td>
+
+                    {/* OCCURRENCE */}
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      {(() => {
+                        const pkgName = c.packageName || c.name || '';
+                        const pkgKey = pkgName.toLowerCase().trim();
+                        const stats = occurrenceStats[pkgKey];
+                        const local = componentOccurrenceMap.get(pkgKey);
+                        const count = stats?.count ?? local?.count ?? 1;
+                        const appsCount = stats?.appsCount ?? local?.appsCount ?? 1;
+
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenOccurrenceDrawer(pkgName, c.purl, c)}
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all cursor-pointer shadow-2xs group"
+                            title={`View ${count} occurrence instance${count === 1 ? '' : 's'} across ${appsCount} application${appsCount === 1 ? '' : 's'}`}
+                          >
+                            <Layers className="w-3.5 h-3.5 text-indigo-500 group-hover:scale-110 transition-transform" />
+                            <span className="font-mono font-bold">{count}</span>
+                            {appsCount > 1 ? (
+                              <span className="text-[9px] bg-indigo-200/70 dark:bg-indigo-900/60 px-1 py-0.2 rounded font-medium text-indigo-800 dark:text-indigo-200">
+                                {appsCount}a
+                              </span>
+                            ) : (
+                              <span className="text-[9px] opacity-75">1a</span>
+                            )}
+                          </button>
+                        );
+                      })()}
+                    </td>
 
                     {/* FILE NAME */}
                     <td className="py-3 px-3 whitespace-nowrap font-mono text-[11px]">
@@ -1148,21 +1408,16 @@ export const SoftwareInventory: React.FC = () => {
                       </span>
                     </td>
                     <td className="py-3 pr-4 pl-3 text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1">
+                      <div className="flex items-center justify-end">
                         <button
-                          onClick={() => deleteComponent(c.id)}
-                          className="p-1 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/50 cursor-pointer transition-colors"
-                          title={`Delete ${c.name} from inventory`}
+                          type="button"
+                          onClick={() => handleOpenHistory(c.name)}
+                          className="p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 dark:text-gray-400 dark:hover:text-blue-300 transition-colors cursor-pointer border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 shadow-2xs"
+                          title={`View audit history for ${c.name}`}
+                          aria-label={`Audit history for ${c.name}`}
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <History className="w-3.5 h-3.5" />
                         </button>
-                        {/* <button
-                          onClick={() => addToast({ type: 'info', title: 'Component Inspection', message: `Inspecting ${c.name}@${c.version}` })}
-                          className="p-1 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer transition-colors"
-                          title="More options"
-                        >
-                          <MoreVertical className="w-3.5 h-3.5" />
-                        </button> */}
                       </div>
                     </td>
                   </tr>
@@ -1210,8 +1465,8 @@ export const SoftwareInventory: React.FC = () => {
       {/* ================================================================= */}
       {/* MODAL 1: INGEST MANIFEST MODAL (Excel Sr 12) - High-End Redesign  */}
       {/* ================================================================= */}
-      {ingestModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {ingestModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
             {/* Modal Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1340,14 +1595,14 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-
       {/* ================================================================= */}
       {/* MODAL 2: 1-CLICK AUDIT EXPORT MODAL (Excel Sr 12) - High-End      */}
       {/* ================================================================= */}
-      {auditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {auditModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden">
             {/* Modal Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1433,14 +1688,12 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-
       {/* ================================================================= */}
-      {/* MODAL 3: UPLOAD SBOM MODAL (Excel Sr 12) - High-End Redesign      */}
-      {/* ================================================================= */}
-      {uploadModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/60 backdrop-blur-sm p-4 animate-fadeIn">
+      {uploadModalOpen && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
           <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-lg w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden space-y-0">
             {/* Header */}
             <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
@@ -1493,8 +1746,8 @@ export const SoftwareInventory: React.FC = () => {
                   {sbomUploadFileName ? (
                     <div className="space-y-1">
                       <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${sbomParseError
-                          ? 'bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
-                          : 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                        ? 'bg-red-50 dark:bg-red-950/50 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300'
+                        : 'bg-emerald-50 dark:bg-emerald-950/50 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
                         }`}>
                         {sbomParseError ? <X className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                         <span>{sbomUploadFileName}</span>
@@ -1574,7 +1827,417 @@ export const SoftwareInventory: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+
+      {/* Delete Component with Reason Modal */}
+      {deleteTarget && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex items-center justify-center bg-black/60 p-4 animate-fadeIn overflow-y-auto">
+          <div className="bg-white dark:bg-[#111827] rounded-2xl max-w-md w-full shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden p-6 space-y-4">
+            <div className="flex items-center gap-3 text-red-600 dark:text-red-400">
+              <div className="p-2 rounded-xl bg-red-50 dark:bg-red-950/50">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Delete Inventory Component</h3>
+            </div>
+            <p className="text-xs text-gray-600 dark:text-gray-300">
+              You are removing <span className="font-semibold text-gray-900 dark:text-white">{deleteTarget.name}@{deleteTarget.version}</span>.
+              Please provide a justification to record in the audit trail.
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Reason for Removal *</label>
+              <textarea
+                rows={3}
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="e.g. Deprecated package replaced by native module / False positive"
+                className="w-full text-xs px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteReason(''); }}
+                className="px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={!deleteReason.trim()}
+                onClick={() => {
+                  if (deleteTarget && deleteReason.trim()) {
+                    deleteComponent(deleteTarget.id, deleteReason.trim());
+                    setDeleteTarget(null);
+                    setDeleteReason('');
+                  }
+                }}
+                className="px-3.5 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors cursor-pointer shadow-sm"
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Package History Drawer */}
+      {historyPackage && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setHistoryPackage(null)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    {historyPackage}
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 font-normal">
+                      Version Timeline
+                    </span>
+                  </h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Chronological evolution across scans, upgrades, and manual overrides
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setHistoryPackage(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="p-6 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/30 grid grid-cols-3 gap-3">
+              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">Total Events</span>
+                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">{historyData?.total_events || 0}</p>
+              </div>
+              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">Distinct Versions</span>
+                <p className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-0.5">{historyData?.distinct_versions?.length || 0}</p>
+              </div>
+              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-200 dark:border-gray-800 shadow-xs">
+                <span className="text-[11px] text-gray-500 dark:text-gray-400">Latest Version</span>
+                <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400 mt-1 truncate">
+                  {historyData?.distinct_versions && historyData.distinct_versions.length > 0
+                    ? historyData.distinct_versions[historyData.distinct_versions.length - 1]
+                    : 'N/A'}
+                </p>
+              </div>
+            </div>
+
+            {/* Timeline List */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {loadingHistory ? (
+                <div className="py-12 text-center text-xs text-gray-500">Loading version history...</div>
+              ) : (!historyData || historyData.timeline.length === 0) ? (
+                <div className="py-12 text-center text-xs text-gray-500">No historical events recorded for this package.</div>
+              ) : (
+                <div className="relative pl-6 space-y-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-gray-200 dark:before:bg-gray-800">
+                  {historyData.timeline.map((evt, idx) => {
+                    const isUpgraded = evt.change_type === 'UPGRADED';
+                    const isAdded = evt.change_type === 'ADDED';
+                    const isRemove = evt.change_type === 'REMOVE';
+
+                    let badgeColor = 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300';
+                    if (isUpgraded) badgeColor = 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900';
+                    else if (isAdded) badgeColor = 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900';
+                    else if (isRemove) badgeColor = 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300 border border-red-200 dark:border-red-900';
+
+                    return (
+                      <div key={idx} className="relative group">
+                        <div className={`absolute -left-[27px] top-1.5 w-3 h-3 rounded-full border-2 bg-white dark:bg-[#0f172a] ${isUpgraded ? 'border-blue-500' : isAdded ? 'border-emerald-500' : isRemove ? 'border-red-500' : 'border-gray-400'
+                          }`} />
+                        <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-3.5 shadow-xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
+                                {evt.change_type}
+                              </span>
+                              <span className="text-xs font-mono font-semibold text-gray-900 dark:text-white">
+                                v{evt.version}
+                              </span>
+                              {evt.previous_version && (
+                                <span className="text-[10px] text-gray-400">
+                                  (from v{evt.previous_version})
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-gray-400">
+                              {evt.timestamp ? new Date(evt.timestamp).toLocaleString() : ''}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-gray-600 dark:text-gray-300 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-400">Scope:</span>
+                              <span className="font-medium text-gray-900 dark:text-gray-200">{evt.application} / {evt.module}</span>
+                            </div>
+                            {evt.source_manifest && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-gray-400">Manifest:</span>
+                                <span className="font-mono text-[11px] text-gray-500">{evt.source_manifest}</span>
+                              </div>
+                            )}
+                            {evt.reason && (
+                              <div className="flex items-start gap-2 pt-1 border-t border-gray-100 dark:border-gray-800/60">
+                                <span className="text-gray-400">Note:</span>
+                                <span className="text-gray-700 dark:text-gray-300 italic">{evt.reason}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Audit Log Drawer */}
+      {showAuditLog && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setShowAuditLog(false)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">Inventory Audit Log</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    Tracks manual additions, removals with reason, and automated scan closures
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAuditLog(false)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-3">
+              {loadingAudit ? (
+                <div className="py-12 text-center text-xs text-gray-500">Loading audit log...</div>
+              ) : auditItems.length === 0 ? (
+                <div className="py-12 text-center text-xs text-gray-500">No audit log entries found.</div>
+              ) : (
+                auditItems.map((item) => (
+                  <div key={item.id} className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl p-4 shadow-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.action === 'ADD' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300' :
+                            item.action === 'REMOVE' ? 'bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300' :
+                              item.action === 'VULN_STATUS_CHANGE' ? 'bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300' :
+                                'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300'
+                          }`}>
+                          {item.action === 'VULN_STATUS_CHANGE' ? 'VULN STATUS' : item.action}
+                        </span>
+                        <span className="text-xs font-semibold text-gray-900 dark:text-white">
+                          {item.component_name} {item.action === 'VULN_STATUS_CHANGE' ? `→ ${item.component_version}` : `@ ${item.component_version}`}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-gray-400">
+                        {item.created_at ? new Date(item.created_at).toLocaleString() : ''}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-600 dark:text-gray-300">
+                      <span className="text-gray-400">Reason: </span>
+                      {item.reason || 'None provided'}
+                    </p>
+                    <div className="text-[10px] text-gray-400 flex items-center justify-between pt-1 border-t border-gray-100 dark:border-gray-800/60">
+                      <span>By: {item.changed_by}</span>
+                      <span>{item.application_id || 'System'}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* SC-03: Package Occurrence Drawer */}
+      {selectedPackageForDrawer && createPortal(
+        <div className="fixed inset-0 z-[9999] w-screen h-screen flex justify-end bg-black/60 animate-fadeIn">
+          <div className="absolute inset-0 cursor-pointer" onClick={() => setSelectedPackageForDrawer(null)} />
+          <div className="relative w-full max-w-2xl bg-white dark:bg-[#0f172a] shadow-2xl h-full flex flex-col border-l border-gray-200 dark:border-gray-800 z-10 animate-in slide-in-from-right duration-200">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
+                  <Layers className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-lg font-bold font-mono text-gray-900 dark:text-white">
+                      {selectedPackageForDrawer}
+                    </span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                      Occurrence Details
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Cross-application usage distribution across all software inventories and scans
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedPackageForDrawer(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Summary Metrics */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-800 grid grid-cols-3 gap-3 bg-white dark:bg-[#111827]">
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Total Instances
+                </span>
+                <span className="text-xl font-bold font-mono text-indigo-600 dark:text-indigo-400">
+                  {loadingDrawer ? '...' : (drawerData?.occurrence_count ?? 0)}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Applications
+                </span>
+                <span className="text-xl font-bold font-mono text-gray-900 dark:text-white">
+                  {loadingDrawer ? '...' : (drawerData?.applications_count ?? 0)}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400 block mb-0.5">
+                  Modules
+                </span>
+                <span className="text-xl font-bold font-mono text-gray-900 dark:text-white">
+                  {loadingDrawer ? '...' : (drawerData?.modules_count ?? 0)}
+                </span>
+              </div>
+            </div>
+
+            {/* Filter Toolbar */}
+            <div className="p-3 border-b border-gray-100 dark:border-gray-800 bg-gray-50/40 dark:bg-gray-900/20 flex items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={drawerFilter}
+                  onChange={(e) => setDrawerFilter(e.target.value)}
+                  placeholder="Filter by application, module, version, manifest path..."
+                  className="w-full text-xs pl-9 pr-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <span className="text-xs text-gray-500 whitespace-nowrap">
+                {filteredOccurrenceUsages.length} of {drawerData?.usages?.length ?? 0} usages
+              </span>
+            </div>
+
+            {/* Drawer Table Scroll Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {loadingDrawer ? (
+                <div className="py-16 text-center text-gray-500 space-y-3">
+                  <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-xs font-medium">Querying package occurrences across inventories...</p>
+                </div>
+              ) : filteredOccurrenceUsages.length === 0 ? (
+                <div className="py-16 text-center text-gray-400 space-y-2">
+                  <p className="text-sm font-semibold">No occurrence records found</p>
+                  <p className="text-xs text-gray-500">
+                    No matching application modules found for the filter or this package.
+                  </p>
+                </div>
+              ) : (
+                <div className="border border-gray-200 dark:border-gray-800 rounded-xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-gray-50 dark:bg-gray-800 text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-gray-200 dark:border-gray-700">
+                      <tr>
+                        <th className="p-3">Application</th>
+                        <th className="p-3">Module</th>
+                        <th className="p-3">Version</th>
+                        <th className="p-3">Scope / Type</th>
+                        <th className="p-3">Manifest Location</th>
+                        <th className="p-3">Detection</th>
+                        <th className="p-3">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                      {filteredOccurrenceUsages.map((u, i) => (
+                        <tr key={`${u.application_id}-${u.module_id}-${i}`} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/40">
+                          <td className="p-3">
+                            <span className="font-semibold text-gray-900 dark:text-white block">
+                              {u.application_name || u.application_id || 'Unknown'}
+                            </span>
+                            {u.branch && (
+                              <span className="text-[10px] text-gray-400 flex items-center gap-1 mt-0.5">
+                                <GitBranch className="w-3 h-3" /> {u.branch}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 font-mono text-gray-700 dark:text-gray-300">
+                            {u.module_name || u.module_id || '-'}
+                          </td>
+                          <td className="p-3 font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+                            {u.version || '-'}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex flex-col gap-1 items-start">
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900">
+                                {u.direct_dependency ? 'Direct' : 'Transitive'}
+                              </span>
+                              <span className="text-[10px] text-gray-500 uppercase font-mono">
+                                {u.scope || 'runtime'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-gray-600 dark:text-gray-400 text-[11px]">
+                            <div className="flex items-center gap-1.5" title={u.package_location || 'manifest'}>
+                              <FileCode className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                              <span className="truncate max-w-[140px]">{u.package_location || 'manifest'}</span>
+                            </div>
+                          </td>
+                          <td className="p-3 font-mono text-[10px] text-gray-500 uppercase">
+                            {u.detection_method || 'cyclonedx'}
+                          </td>
+                          <td className="p-3">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                              u.status?.toLowerCase() === 'removed'
+                                ? 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
+                                : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
+                            }`}>
+                              {u.status || 'Active'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {/* Upload File Pop-up Modal */}

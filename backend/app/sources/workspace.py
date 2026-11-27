@@ -206,7 +206,7 @@ def is_supported_manifest(name: str) -> bool:
     lower = base.lower()
     if lower in _MANIFEST_LOWER:
         return True
-    return lower.endswith((".csproj", ".vbproj", ".fsproj", ".opam", ".cabal", ".json"))
+    return lower.endswith((".csproj", ".vbproj", ".fsproj", ".opam", ".cabal", ".json", ".xml", ".spdx"))
 
 
 def safe_upload_rel(name: str) -> str:

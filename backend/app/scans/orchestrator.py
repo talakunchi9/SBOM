@@ -243,14 +243,20 @@ class Orchestrator:
         added = len(snap.get("components") or [])
         skipped = int(snap.get("components_skipped") or 0)
         new_only = max(0, added - skipped)
+        auto_closed = 0
+        try:
+            auto_closed = self._auto_close_remediated_vulnerabilities(scan, snap)
+        except Exception:
+            pass
+        close_msg = f", {auto_closed} vulnerabilities auto-closed" if auto_closed > 0 else ""
         if skipped:
             self._stage(
                 scan["id"],
                 "COMPLETED",
-                f"scan complete, {added} components ({new_only} new, {skipped} existing versions)",
+                f"scan complete, {added} components ({new_only} new, {skipped} existing versions){close_msg}",
             )
         else:
-            self._stage(scan["id"], "COMPLETED", f"scan complete, {added} components")
+            self._stage(scan["id"], "COMPLETED", f"scan complete, {added} components{close_msg}")
         self.audit.record(
             "SCAN_COMPLETED",
             organization_id=scan["organization_id"],
@@ -258,6 +264,100 @@ class Orchestrator:
             metadata={"components": added, "existing_versions": skipped},
         )
         METRICS.add("components_discovered", len(snap.get("components") or []))
+
+
+    def _auto_close_remediated_vulnerabilities(self, scan: dict[str, Any], snap: dict[str, Any]) -> int:
+        db = self.boms.db
+        org_id = scan.get("organization_id") or "default"
+        project_name = scan.get("project_id") or ""
+        app_name = scan.get("application_id") or ""
+        if not project_name:
+            return 0
+
+        prior_row = db.execute(
+            """SELECT s.id AS sbom_id, s.scan_id
+               FROM sboms s
+               JOIN scans sc ON sc.id = s.scan_id
+               WHERE s.organization_id = ?
+                 AND s.project_id = ?
+                 AND (? = '' OR s.application_id = ?)
+                 AND LOWER(sc.scan_status) = 'completed'
+                 AND s.id != ?
+               ORDER BY s.generated_at DESC
+               LIMIT 1""",
+            (org_id, project_name, app_name, app_name, snap["id"]),
+        ).fetchone()
+
+        if not prior_row:
+            return 0
+
+        prior_sbom_id = prior_row["sbom_id"]
+
+        curr_findings = db.execute(
+            """SELECT DISTINCT UPPER(v.vulnerability_key) AS vuln_key
+               FROM findings f
+               JOIN vulnerabilities v ON v.id = f.vulnerability_id
+               WHERE f.sbom_id = ?""",
+            (snap["id"],),
+        ).fetchall()
+        curr_keys = {row["vuln_key"] for row in curr_findings}
+
+        prev_findings = db.execute(
+            """SELECT DISTINCT f.id AS finding_id, UPPER(v.vulnerability_key) AS vuln_key,
+                               sc.name AS comp_name, sc.version AS comp_version
+               FROM findings f
+               JOIN vulnerabilities v ON v.id = f.vulnerability_id
+               JOIN sbom_components sc ON sc.id = f.sbom_component_id
+               LEFT JOIN vulnerability_triage t
+                 ON UPPER(t.vulnerability_key) = UPPER(v.vulnerability_key)
+                AND t.organization_id = ?
+                AND (t.project_name = ? OR t.project_name = '')
+               WHERE f.sbom_id = ?
+                 AND COALESCE(t.status, f.status, 'Open') IN ('Open', 'In Progress')""",
+            (org_id, project_name, prior_sbom_id),
+        ).fetchall()
+
+        closed_count = 0
+        for row in prev_findings:
+            vuln_key = row["vuln_key"]
+            if vuln_key in curr_keys:
+                continue
+
+            closed_count += 1
+            justification = f"Auto-closed: remediated in scan {scan['id']} ({row['comp_name']} resolved)"
+            triage_id = str(uuid.uuid4())
+
+            db.execute(
+                """INSERT INTO vulnerability_triage (
+                     id, organization_id, vulnerability_key, project_name, application_name, module_name,
+                     status, vex_status, justification, owner, updated_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'Resolved', 'fixed', ?, 'SYSTEM_AUTO_CLOSURE', CURRENT_TIMESTAMP)
+                   ON CONFLICT (organization_id, vulnerability_key, project_name, application_name)
+                   DO UPDATE SET
+                     status = 'Resolved',
+                     vex_status = 'fixed',
+                     justification = EXCLUDED.justification,
+                     owner = 'SYSTEM_AUTO_CLOSURE',
+                     updated_at = CURRENT_TIMESTAMP
+                   WHERE vulnerability_triage.status IN ('Open', 'In Progress')""",
+                (triage_id, org_id, vuln_key, project_name, app_name, app_name, justification),
+            )
+
+            db.execute(
+                """UPDATE findings SET status = 'Resolved', vex_status = 'fixed', updated_at = CURRENT_TIMESTAMP
+                   WHERE id = ?""",
+                (row["finding_id"],),
+            )
+
+            db.execute(
+                """INSERT INTO inventory_change_log (
+                     id, organization_id, application_id, module_id, component_name, component_version,
+                     action, reason, changed_by, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'AUTO_SCAN_CLOSE', ?, 'SYSTEM_AUTO_CLOSURE', CURRENT_TIMESTAMP)""",
+                (str(uuid.uuid4()), org_id, project_name, app_name, row["comp_name"], row["comp_version"], justification),
+            )
+
+        return closed_count
 
     def _ensure_active(self, scan_id: str) -> None:
         current = self.scans.get_scan(scan_id)
