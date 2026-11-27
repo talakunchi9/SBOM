@@ -640,38 +640,105 @@ export const SoftwareInventory: React.FC = () => {
     const dataToExport = filteredComponents;
     const headers = [
       'Application Name',
+      'Application Version',
+      'Ownership Type',
+      'Vendor Name',
       'Module Name',
+      'Source',
+      'Repository / Branch',
+      'Giving By',
       'Component Name',
       'Package Name',
       'Version',
+      'PURL',
       'Occurrence',
-      'File Name',
+      'Location / File Path',
+      'Dependency Type',
+      'Ecosystem',
       'License',
+      'Supplier / Publisher',
       'Vulnerabilities',
-      'P-URL',
-      'Risk Level',
     ];
+
+    // Pre-index original components and scans for fast metadata lookup
+    const rawCompById = new Map((components || []).map((comp) => [comp.id, comp]));
+    const scanById = new Map((scansHistory || []).map((s) => [s.id, s]));
+
     const rows = [
       headers,
       ...dataToExport.map((c) => {
+        const rawComp = rawCompById.get(c.id);
+        const matchedScan =
+          (c.scanId ? scanById.get(c.scanId) : undefined) ||
+          (scansHistory || []).find(
+            (s) =>
+              (s.targetProject || '').toLowerCase() === (c.projectName || '').toLowerCase() &&
+              (!c.projectApplication || (s.appService || '').toLowerCase() === c.projectApplication.toLowerCase())
+          );
+        const matchedProj = (projects || []).find(
+          (p) => (p.name || '').toLowerCase() === (c.projectName || '').toLowerCase()
+        );
+
         const pkgKey = (c.packageName || c.name || '').toLowerCase().trim();
         const stats = occurrenceStats[pkgKey];
         const local = componentOccurrenceMap.get(pkgKey);
         const count = stats?.count ?? local?.count ?? 1;
         const appsCount = stats?.appsCount ?? local?.appsCount ?? 1;
         const occString = `${count} (${appsCount} app${appsCount === 1 ? '' : 's'})`;
+
+        const rawAppVer = (matchedScan?.releaseTag || matchedProj?.version || '').trim();
+        const appVersion = rawAppVer
+          ? rawAppVer.toLowerCase().startsWith('v')
+            ? rawAppVer
+            : `v${rawAppVer}`
+          : 'v1.0.0';
+
+        const ownershipType =
+          (matchedScan as any)?.developmentType ||
+          (matchedProj as any)?.ownership ||
+          matchedScan?.businessOwner ||
+          'In-house';
+
+        const vendorName =
+          (matchedScan as any)?.vendorName ||
+          (matchedProj as any)?.vendor_name ||
+          ((matchedScan as any)?.developmentType === 'Vendor' ? matchedScan?.businessOwner : '') ||
+          '—';
+
+        const sourceVal = matchedScan?.scanType || (matchedProj as any)?.source || 'Local Source';
+
+        const repoBranch =
+          (matchedProj as any)?.repo_branch ||
+          (matchedProj?.repoUrl
+            ? matchedProj.branch
+              ? `${matchedProj.repoUrl} · ${matchedProj.branch}`
+              : matchedProj.repoUrl
+            : '') ||
+          (matchedScan?.scanType === 'Remote Git' ? matchedScan?.source : '') ||
+          '—';
+
+        const givingBy = rawComp?.createdBy || matchedScan?.requestedBy || matchedScan?.createdBy || 'Asha Mehta';
+
         return [
-          c.projectName,
-          c.projectApplication,
+          c.projectName || '—',
+          appVersion,
+          ownershipType,
+          vendorName,
+          c.projectApplication || '—',
+          sourceVal,
+          repoBranch,
+          givingBy,
           c.name,
           c.packageName,
           c.version,
+          c.purl || '',
           occString,
           c.fileName || c.fieldType || 'package.json',
-          c.license,
+          c.directDependency ? 'Direct' : 'Transitive',
+          c.ecosystem || 'npm',
+          c.license || 'Unknown',
+          rawComp?.supplier || '—',
           c.vulnerabilities,
-          c.purl,
-          c.riskLevel,
         ];
       }),
     ];
